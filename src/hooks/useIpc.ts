@@ -56,6 +56,7 @@ const api = {
     },
     getCloudInfo:   (appId: string) => call(invoke('get_cloud_info', { appId })),
     downloadImages: (appId: string) => call(invoke('download_images', { appId })),
+    readImage:      (path: string) => call(invoke<string>('read_image', { path })),
   },
   status: {
     refreshAll: () => call(invoke('refresh_all_games_status')),

@@ -389,11 +389,29 @@ pub async fn open_images_dialog(app: AppHandle) -> Res<Vec<String>> {
                 .map(|f| f.to_string()).collect());
         });
     let files: Vec<String> = rx.await.unwrap_or_default();
-    // Let the webview preview the picked images through the asset protocol
-    for f in &files {
-        let _ = app.asset_protocol_scope().allow_file(f);
-    }
     Ok(files)
+}
+
+/// Lit une image locale et la renvoie en data URL (le protocole asset ne
+/// s'affiche pas de façon fiable dans la webview Linux).
+#[tauri::command]
+pub async fn read_image(path: String) -> Res<String> {
+    use base64::Engine;
+    const MAX_SIZE: u64 = 25 * 1024 * 1024;
+    let ext = std::path::Path::new(&path).extension()
+        .and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase()).unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => return Err("Unsupported image type".into()),
+    };
+    let meta = tokio::fs::metadata(&path).await.map_err(e)?;
+    if !meta.is_file() || meta.len() > MAX_SIZE { return Err("Invalid image file".into()); }
+    let bytes = tokio::fs::read(&path).await.map_err(e)?;
+    Ok(format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 // ─── Cloud scan ───────────────────────────────────────────────────────────────
