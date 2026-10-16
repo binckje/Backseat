@@ -45,6 +45,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} Mo`;
 }
 
+function formatDate(ms?: number): string {
+  if (!ms) return '';
+  return new Date(ms).toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 function countFiles(nodes: FileTreeNode[]): number {
   return nodes.reduce((acc, n) => acc + (n.isDirectory ? countFiles(n.children) : 1), 0);
 }
@@ -104,9 +111,10 @@ function TreeNode({ node, selected, onToggle, depth = 0 }: {
           style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, cursor: node.isDirectory ? 'pointer' : 'default' }}>
           <span style={{ fontSize: 14, flexShrink: 0 }}>{node.isDirectory ? (expanded ? '📂' : '📁') : '📄'}</span>
           <span style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{node.name}</span>
-          {!node.isDirectory && node.size > 0 && (
-            <span style={{ fontSize: 11, color: 'var(--txtEmerald)', marginLeft: 'auto', flexShrink: 0 }}>
-              {formatSize(node.size)}
+          {!node.isDirectory && (node.size > 0 || node.modified) && (
+            <span style={{ fontSize: 11, color: 'var(--txtEmerald)', marginLeft: 'auto', flexShrink: 0, display: 'flex', gap: 14 }}>
+              {node.modified && <span title="Dernière modification">{formatDate(node.modified)}</span>}
+              {node.size > 0 && <span style={{ minWidth: 56, textAlign: 'right' }}>{formatSize(node.size)}</span>}
             </span>
           )}
           {node.isDirectory && allChildFiles.length > 0 && (

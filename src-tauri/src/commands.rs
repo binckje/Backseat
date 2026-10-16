@@ -106,7 +106,7 @@ pub async fn cloud_connect(provider_type: String, state: State<'_, AppState>) ->
     let mut provider = build_provider(&provider_type, &s)?;
     let info = provider.connect().await.map_err(e)?;
     let mut cloud = state.cloud.lock().await;
-    *cloud = CloudState { provider: Some(provider), provider_type: Some(provider_type.clone()) };
+    *cloud = CloudState { provider: Some(std::sync::Arc::from(provider)), provider_type: Some(provider_type.clone()) };
     // Persist active provider
     let mut new_s = s; new_s.active_cloud_provider = Some(provider_type);
     settings::save(&new_s).map_err(e)?;
@@ -165,8 +165,7 @@ pub async fn add_game(game: SharedGame, state: State<'_, AppState>) -> Res<Vec<S
     if s.shared_games.iter().any(|g| g.app_id == game.app_id) {
         return Err("Game already added".into());
     }
-    let cloud = state.cloud.lock().await;
-    if let Some(ref p) = cloud.provider {
+    if let Some(p) = state.provider_opt().await {
         permissions::init(p.as_ref(), &game.app_id, &game.name, &s.steam_id).await.map_err(e)?;
     }
     s.shared_games.push(game);
@@ -178,8 +177,7 @@ pub async fn add_game(game: SharedGame, state: State<'_, AppState>) -> Res<Vec<S
 pub async fn remove_game(app_id: String, state: State<'_, AppState>) -> Res<()> {
     let mut s = settings::load();
     if let Some(game) = s.shared_games.iter().find(|g| g.app_id == app_id) {
-        let cloud = state.cloud.lock().await;
-        if let Some(ref p) = cloud.provider {
+        if let Some(p) = state.provider_opt().await {
             let folder = game_cloud_path(&game.name, &app_id);
             let _ = p.delete(&folder).await;
         }
@@ -205,8 +203,7 @@ pub async fn get_permissions(app_id: String, state: State<'_, AppState>) -> Res<
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id)
         .ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     let mut perms = permissions::read(p.as_ref(), &game.name, &app_id).await;
     if perms.is_none() {
         permissions::init(p.as_ref(), &app_id, &game.name, &s.steam_id).await.map_err(e)?;
@@ -219,8 +216,7 @@ pub async fn get_permissions(app_id: String, state: State<'_, AppState>) -> Res<
 pub async fn grant_access(app_id: String, friend_steam_id: String, state: State<'_, AppState>) -> Res<()> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?;
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     permissions::grant(p.as_ref(), &game.name, &app_id, &friend_steam_id, &s.steam_id).await.map_err(e)
 }
 
@@ -228,8 +224,7 @@ pub async fn grant_access(app_id: String, friend_steam_id: String, state: State<
 pub async fn revoke_access(app_id: String, friend_steam_id: String, state: State<'_, AppState>) -> Res<()> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?;
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     permissions::revoke(p.as_ref(), &game.name, &app_id, &friend_steam_id, &s.steam_id).await.map_err(e)
 }
 
@@ -237,8 +232,7 @@ pub async fn revoke_access(app_id: String, friend_steam_id: String, state: State
 pub async fn release_lock(app_id: String, state: State<'_, AppState>) -> Res<()> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?;
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     permissions::release_lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await.map_err(e)
 }
 
@@ -257,8 +251,7 @@ pub async fn upload_save(payload: UploadPayload, on_progress: tauri::ipc::Channe
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == payload.app_id)
         .ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
     // Permission + lock check
     let mut perms = permissions::read(p.as_ref(), &game.name, &payload.app_id).await;
@@ -295,8 +288,7 @@ pub async fn download_save(app_id: String, on_progress: tauri::ipc::Channel<serd
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id)
         .ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
     let perms = permissions::read(p.as_ref(), &game.name, &app_id).await
         .ok_or("Permissions not found")?;
@@ -332,8 +324,7 @@ pub async fn download_save(app_id: String, on_progress: tauri::ipc::Channel<serd
 pub async fn get_cloud_info(app_id: String, state: State<'_, AppState>) -> Res<saves::CloudSaveMetadata> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     Ok(saves::fetch_metadata(p.as_ref(), &game.name, &app_id).await)
 }
 
@@ -341,8 +332,7 @@ pub async fn get_cloud_info(app_id: String, state: State<'_, AppState>) -> Res<s
 pub async fn download_images(app_id: String, app: AppHandle, state: State<'_, AppState>) -> Res<Vec<String>> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     let cache_dir = app.path().app_cache_dir().map_err(e)?
         .join("image-cache").join(&app_id);
     saves::download_images(p.as_ref(), &game.name, &app_id,
@@ -398,7 +388,12 @@ pub async fn open_images_dialog(app: AppHandle) -> Res<Vec<String>> {
             let _ = tx.send(files.unwrap_or_default().iter()
                 .map(|f| f.to_string()).collect());
         });
-    Ok(rx.await.unwrap_or_default())
+    let files: Vec<String> = rx.await.unwrap_or_default();
+    // Let the webview preview the picked images through the asset protocol
+    for f in &files {
+        let _ = app.asset_protocol_scope().allow_file(f);
+    }
+    Ok(files)
 }
 
 // ─── Cloud scan ───────────────────────────────────────────────────────────────
@@ -416,36 +411,34 @@ pub struct CloudGameSuggestion {
 #[tauri::command]
 pub async fn scan_cloud_games(state: State<'_, AppState>) -> Res<Vec<CloudGameSuggestion>> {
     let s = settings::load();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
     let entries = p.list_files("/backseat").await.map_err(e)?;
     let already_added: std::collections::HashSet<String> =
         s.shared_games.iter().map(|g| g.app_id.clone()).collect();
 
-    let mut suggestions = Vec::new();
-
-    for entry in entries {
-        if !entry.is_directory { continue; }
-
-        // Folder name is GameSlug_AppID — permissions file mirrors this
-        let folder = &entry.name;
-        let perms_path = format!("/backseat/{}/permissions_{}.json", folder, folder);
-
-        let Ok(txt) = p.download_text(&perms_path).await else { continue };
-        let Ok(perms) = serde_json::from_str::<permissions::GamePermissions>(&txt) else { continue };
-
-        let has_access = perms.owner == s.steam_id
-            || perms.allowed_users.contains(&s.steam_id);
-
-        if has_access && !already_added.contains(&perms.app_id) {
-            suggestions.push(CloudGameSuggestion {
-                is_owner: perms.owner == s.steam_id,
-                app_id: perms.app_id,
-                game_name: perms.game_name,
-            });
+    // Read every game's permissions file concurrently
+    let reads = entries.iter().filter(|entry| entry.is_directory).map(|entry| {
+        let p = p.clone();
+        async move {
+            // Folder name is GameSlug_AppID — permissions file mirrors this
+            let folder = &entry.name;
+            let perms_path = format!("/backseat/{}/permissions_{}.json", folder, folder);
+            let txt = p.download_text(&perms_path).await.ok()?;
+            serde_json::from_str::<permissions::GamePermissions>(&txt).ok()
         }
-    }
+    });
+    let suggestions = join_all(reads).await.into_iter().flatten()
+        .filter(|perms| {
+            let has_access = perms.owner == s.steam_id || perms.allowed_users.contains(&s.steam_id);
+            has_access && !already_added.contains(&perms.app_id)
+        })
+        .map(|perms| CloudGameSuggestion {
+            is_owner: perms.owner == s.steam_id,
+            app_id: perms.app_id,
+            game_name: perms.game_name,
+        })
+        .collect();
 
     Ok(suggestions)
 }
@@ -493,20 +486,19 @@ pub struct GameStatusUpdate {
 #[tauri::command]
 pub async fn refresh_all_games_status(state: State<'_, AppState>) -> Res<Vec<GameStatusUpdate>> {
     let s = settings::load();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
-    let mut updates = Vec::new();
-    for game in &s.shared_games {
-        if let Some(perms) = permissions::read(p.as_ref(), &game.name, &game.app_id).await {
-            updates.push(GameStatusUpdate {
+    let reads = s.shared_games.iter().map(|game| {
+        let p = p.clone();
+        async move {
+            permissions::read(p.as_ref(), &game.name, &game.app_id).await.map(|perms| GameStatusUpdate {
                 app_id: game.app_id.clone(),
                 status: perms.status,
                 locked_by: perms.locked_by,
-            });
+            })
         }
-    }
-    Ok(updates)
+    });
+    Ok(join_all(reads).await.into_iter().flatten().collect())
 }
 
 // ─── Heroic art enrichment ────────────────────────────────────────────────────
@@ -590,8 +582,7 @@ pub async fn get_local_save_tree(app_id: String) -> Res<Vec<FileTreeNode>> {
 pub async fn get_cloud_save_tree(app_id: String, state: State<'_, AppState>) -> Res<Vec<FileTreeNode>> {
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id).ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
     let cloud_saves = crate::services::cloud::game_saves_path(&game.name, &app_id);
     let nodes = filetree::build_cloud_tree(p.as_ref(), &cloud_saves).await;
     Ok(nodes)
@@ -618,8 +609,7 @@ pub async fn upload_selected_saves(
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == payload.app_id)
         .ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
     // Permission check
     let mut perms = permissions::read(p.as_ref(), &game.name, &payload.app_id).await;
@@ -638,30 +628,18 @@ pub async fn upload_selected_saves(
 
     on_progress.send(serde_json::json!({ "current": 0, "total": total, "currentFile": null, "phase": "uploading" })).ok();
 
-    const CONCURRENCY: usize = 4;
-    let valid_files: Vec<&String> = payload.selected_paths.iter()
-        .filter(|rel| {
+    let jobs: Vec<(String, String)> = payload.selected_paths.iter()
+        .filter_map(|rel| {
             let local = save_root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            local.exists() && !local.is_dir()
+            (local.exists() && !local.is_dir())
+                .then(|| (local.to_string_lossy().into_owned(), format!("{}/{}", cloud_saves, rel)))
         }).collect();
-
-    for (batch_idx, chunk) in valid_files.chunks(CONCURRENCY).enumerate() {
-        on_progress.send(serde_json::json!({
-            "current": current, "total": total,
-            "currentFile": format!("Lot {}/{}", batch_idx + 1, (valid_files.len() + CONCURRENCY - 1) / CONCURRENCY),
-            "phase": "uploading"
-        })).ok();
-        let pairs: Vec<(String, String)> = chunk.iter().map(|rel| {
-            let local = save_root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
-                .to_string_lossy().into_owned();
-            let remote = format!("{}/{}", cloud_saves, rel);
-            (local, remote)
-        }).collect();
-        let futs = pairs.iter().map(|(l, r)| p.upload_file(l, r));
-        let results = join_all(futs).await;
-        for r in results { r.map_err(e)?; }
-        current += chunk.len() as u32;
-    }
+    let file_count = jobs.len() as u32;
+    let pr = p.as_ref();
+    saves::transfer_all(jobs, |l, r| async move { pr.upload_file(&l, &r).await }, |n, name| {
+        on_progress.send(serde_json::json!({ "current": n, "total": total, "currentFile": name, "phase": "uploading" })).ok();
+    }).await.map_err(e)?;
+    current += file_count;
 
     // Images
     for (i, img) in payload.image_paths.iter().enumerate() {
@@ -700,8 +678,7 @@ pub async fn download_selected_saves(
     let s = settings::load();
     let game = s.shared_games.iter().find(|g| g.app_id == app_id)
         .ok_or("Game not found")?.clone();
-    let cloud = state.cloud.lock().await;
-    let p = cloud.provider.as_ref().ok_or("Not connected")?;
+    let p = state.provider().await?;
 
     let perms = permissions::read(p.as_ref(), &game.name, &app_id).await
         .ok_or("Permissions not found")?;
@@ -726,30 +703,19 @@ pub async fn download_selected_saves(
 
     let cloud_saves = crate::services::cloud::game_saves_path(&game.name, &app_id);
     let total = selected_paths.len() as u32;
-    let mut current = 0u32;
 
     on_progress.send(serde_json::json!({ "current": 0, "total": total, "currentFile": null, "phase": "downloading" })).ok();
 
-    const CONCURRENCY: usize = 4;
-    let indexed: Vec<(&String, &String)> = selected_paths.iter().zip(locals.iter()).collect();
-    for (batch_idx, chunk) in indexed.chunks(CONCURRENCY).enumerate() {
-        on_progress.send(serde_json::json!({
-            "current": current, "total": total,
-            "currentFile": format!("Lot {}/{}", batch_idx + 1, (selected_paths.len() + CONCURRENCY - 1) / CONCURRENCY),
-            "phase": "downloading"
-        })).ok();
-        let pairs: Vec<(String, String)> = chunk.iter().map(|(rel, local)| {
-            (format!("{}/{}", cloud_saves, rel), (*local).clone())
-        }).collect();
-        let futs = pairs.iter().map(|(r, l)| p.download_file(r, l));
-        let results = join_all(futs).await;
-        for r in results {
-            if let Err(err) = r {
-                let _ = permissions::release_lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await;
-                return Err(err.to_string());
-            }
-        }
-        current += chunk.len() as u32;
+    let jobs: Vec<(String, String)> = selected_paths.iter().zip(locals)
+        .map(|(rel, local)| (format!("{}/{}", cloud_saves, rel), local))
+        .collect();
+    let pr = p.as_ref();
+    let res = saves::transfer_all(jobs, |r, l| async move { pr.download_file(&r, &l).await }, |n, name| {
+        on_progress.send(serde_json::json!({ "current": n, "total": total, "currentFile": name, "phase": "downloading" })).ok();
+    }).await;
+    if let Err(err) = res {
+        let _ = permissions::release_lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await;
+        return Err(err.to_string());
     }
 
     on_progress.send(serde_json::json!({ "current": total, "total": total, "currentFile": null, "phase": "finalizing" })).ok();

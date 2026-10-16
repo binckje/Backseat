@@ -14,7 +14,18 @@ pub struct FileTreeNode {
     pub relative_path: String,
     pub is_directory:  bool,
     pub size:          u64,
+    /// Last modification time, Unix milliseconds (files only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified:      Option<i64>,
     pub children:      Vec<FileTreeNode>,
+}
+
+/// Parse a cloud timestamp (WebDAV RFC 2822 or RFC 3339) to Unix milliseconds
+fn parse_cloud_time(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc2822(s)
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(s))
+        .ok()
+        .map(|d| d.timestamp_millis())
 }
 
 impl FileTreeNode {
@@ -104,6 +115,7 @@ fn read_dir_iterative(root: &Path) -> Vec<FileTreeNode> {
                     relative_path: rel,
                     is_directory: false,
                     size: 0,
+                    modified: None,
                     children: vec![],
                 });
                 continue;
@@ -124,6 +136,7 @@ fn read_dir_iterative(root: &Path) -> Vec<FileTreeNode> {
                     relative_path: rel,
                     is_directory: true,
                     size: 0,
+                    modified: None,
                     children: vec![],
                 });
 
@@ -131,12 +144,16 @@ fn read_dir_iterative(root: &Path) -> Vec<FileTreeNode> {
                     subdirs.push((entry_path, idx));
                 }
             } else {
-                let size = std::fs::metadata(&entry_path).map(|m| m.len()).unwrap_or(0);
+                let meta = std::fs::metadata(&entry_path).ok();
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let modified = meta.and_then(|m| m.modified().ok())
+                    .map(|t| chrono::DateTime::<chrono::Utc>::from(t).timestamp_millis());
                 nodes.push(FileTreeNode {
                     name,
                     relative_path: rel,
                     is_directory: false,
                     size,
+                    modified,
                     children: vec![],
                 });
             }
@@ -217,7 +234,12 @@ fn build_cloud_subtree<'a>(
         let Ok(items) = cloud.list_files(path).await else { return vec![]; };
         let mut nodes = Vec::new();
 
-        for item in items {
+        // List all subdirectories concurrently
+        let subtrees = futures::future::join_all(items.iter()
+            .map(|item| async move {
+                if item.is_directory { build_cloud_subtree(cloud, &item.path, base).await } else { vec![] }
+            })).await;
+        for (item, children) in items.iter().zip(subtrees) {
             let name = item.name.clone();
             let rel = if item.path.starts_with(base) {
                 item.path[base.len()..].trim_start_matches('/').to_string()
@@ -226,14 +248,15 @@ fn build_cloud_subtree<'a>(
             };
 
             if item.is_directory {
-                let children = build_cloud_subtree(cloud, &item.path, base).await;
                 nodes.push(FileTreeNode {
-                    name, relative_path: rel, is_directory: true, size: 0, children,
+                    name, relative_path: rel, is_directory: true, size: 0, modified: None, children,
                 });
             } else {
                 nodes.push(FileTreeNode {
                     name, relative_path: rel, is_directory: false,
-                    size: item.size, children: vec![],
+                    size: item.size,
+                    modified: item.modified_at.as_deref().and_then(parse_cloud_time),
+                    children: vec![],
                 });
             }
         }

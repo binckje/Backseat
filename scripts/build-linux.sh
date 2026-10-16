@@ -28,9 +28,9 @@ if yes "Installer/vérifier les dépendances système ?"; then
     sudo apt-get update
     sudo apt-get install -y build-essential curl wget file pkg-config \
       libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-      librsvg2-dev libssl-dev libxdo-dev
+      librsvg2-dev libssl-dev libxdo-dev libdbus-1-dev
   elif command -v dnf >/dev/null; then
-    sudo dnf install -y webkit2gtk4.1-devel openssl-devel curl wget file \
+    sudo dnf install -y webkit2gtk4.1-devel openssl-devel dbus-devel curl wget file \
       libappindicator-gtk3-devel librsvg2-devel libxdo-devel
     sudo dnf group install -y "c-development"
   elif command -v pacman >/dev/null; then

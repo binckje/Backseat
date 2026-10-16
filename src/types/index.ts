@@ -62,5 +62,7 @@ export interface FileTreeNode {
   relativePath: string;
   isDirectory: boolean;
   size: number;
+  /** Last modification time, Unix ms */
+  modified?: number;
   children: FileTreeNode[];
 }

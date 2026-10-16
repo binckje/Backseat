@@ -4,6 +4,7 @@ import { SaveTreeModal } from '../SaveTreeModal/index';
 import { useIpc } from '../../hooks/useIpc';
 import { Icon } from '../common/Icon';
 import type { SharedGame, GamePermissions, CloudSaveInfo, ProgressEvent, SteamFriend } from '../../types/index';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 export function GameCard() {
   const { sharedGames, selectedAppId } = useStore();
@@ -53,20 +54,36 @@ function GameCardInner({ game }: { game: SharedGame }) {
 
 
 
+  const loadCloudData = async () => {
+    setLoadingInfo(true);
+    try {
+      const [pRes, iRes] = await Promise.all([ipc.permissions.get(game.appId), ipc.saves.getCloudInfo(game.appId)]);
+      if (pRes.success && pRes.data) {
+        const p = pRes.data as GamePermissions;
+        setPerms(p);
+        updateSharedGame(game.appId, { cloudInfo: { ...(game.cloudInfo || {} as CloudSaveInfo), status: p.status, lockedBy: p.lockedBy, lockedAt: p.lockedAt } });
+      }
+      if (iRes.success && iRes.data) {
+        const m = iRes.data as { notes: { description: string; uploaderName: string; uploadedAt: string } | null; imageCount: number };
+        setCloudInfo(m.notes);
+        setImageCount(m.imageCount || 0);
+      }
+      return pRes.success && iRes.success;
+    } finally { setLoadingInfo(false); }
+  };
+
   useEffect(() => {
     if (!cloudStatus.connected) return;
     setPerms(null); setCloudInfo(null); setImageCount(0); setLocalImages([]);
-    setLoadingInfo(true);
-    Promise.all([ipc.permissions.get(game.appId), ipc.saves.getCloudInfo(game.appId)])
-      .then(([pRes, iRes]) => {
-        if (pRes.success && pRes.data) setPerms(pRes.data as GamePermissions);
-        if (iRes.success && iRes.data) {
-          const m = iRes.data as { notes: { description: string; uploaderName: string; uploadedAt: string } | null; imageCount: number };
-          if (m.notes) setCloudInfo(m.notes);
-          setImageCount(m.imageCount || 0);
-        }
-      }).finally(() => setLoadingInfo(false));
+    loadCloudData();
   }, [game.appId, cloudStatus.connected]);
+
+  const handleRefresh = async () => {
+    if (loadingInfo) return;
+    setLocalImages([]);
+    const ok = await loadCloudData();
+    addToast(ok ? { type: 'success', message: 'Infos cloud à jour.' } : { type: 'error', message: 'Échec de la vérification du cloud.' });
+  };
 
   useEffect(() => {
     ipc.backup.list(game.appId).then((r) => { if (r.success && r.data) setBackups(r.data as Array<{ timestamp: string; path: string }>); });
@@ -223,6 +240,7 @@ function GameCardInner({ game }: { game: SharedGame }) {
         <span className={`status-badge status-badge--${saveStatus==='available'?'available':saveStatus==='locked'?'locked':'none'}`}>
           {saveStatus==='available'?'Disponible':saveStatus==='locked'?'Verrouillé':'Non uploadé'}
         </span>
+        {cloudStatus.connected && <button className="btn btn--sm btn--secondary" onClick={handleRefresh} disabled={loadingInfo} title="Vérifier les changements sur le cloud" style={{display:'flex',alignItems:'center',gap:5}}><Icon name="restore" size={13} style={loadingInfo ? {animation:'spin .8s linear infinite'} : undefined}/>Actualiser</button>}
         {isLockedByMe && <button className="btn btn--sm btn--secondary" onClick={handleReleaseLock} style={{display:'flex',alignItems:'center',gap:5}}><Icon name="unlock" size={13}/>Libérer</button>}
         {isOwner && isLockedByOther && <button className="btn btn--sm btn--danger" onClick={handleReleaseLock} style={{display:'flex',alignItems:'center',gap:5}}><Icon name="release" size={13}/>Forcer libération</button>}
       </div>
@@ -264,7 +282,7 @@ function GameCardInner({ game }: { game: SharedGame }) {
               </div>
               <div className="field"><label className="label">Screenshots ({selectedImages.length} sélectionné{selectedImages.length>1?'s':''})</label>
                 <button className="btn btn--secondary btn--sm" onClick={async()=>{ const r=await ipc.dialog.openImages(); if(r.success&&r.data) setSelectedImages(r.data as string[]); }} style={{display:'flex',alignItems:'center',gap:5}}><Icon name="image" size={13}/>Choisir des images</button>
-                {selectedImages.length>0 && <div className="img-gallery" style={{marginTop:8}}>{selectedImages.map((img)=><img key={img} className="img-thumb" src={`file://${img}`} alt=""/>)}</div>}
+                {selectedImages.length>0 && <div className="img-gallery" style={{marginTop:8}}>{selectedImages.map((img)=><img key={img} className="img-thumb" src={convertFileSrc(img)} alt=""/>)}</div>}
               </div>
               {uploading
                 ? <InlineProgress event={uploadProgress} pct={pct(uploadProgress)} label="Upload" color="var(--accent)" />

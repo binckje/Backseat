@@ -3,7 +3,9 @@
 //! encountered with the TypeScript version.
 
 use reqwest::{Client, Method};
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 use async_trait::async_trait;
 use super::{CloudProvider, CloudFileInfo, UserInfo};
 use crate::error::{AppError, Result};
@@ -14,6 +16,9 @@ pub struct NextcloudProvider {
     username: String,
     password: String,
     client: Client,
+    /// Directories already created this session: avoids one MKCOL per path
+    /// segment for every uploaded file
+    created_dirs: Mutex<HashSet<String>>,
 }
 
 impl NextcloudProvider {
@@ -25,6 +30,7 @@ impl NextcloudProvider {
         Self {
             server_url: server_url.trim_end_matches('/').to_string(),
             username, password, client,
+            created_dirs: Mutex::new(HashSet::new()),
         }
     }
 
@@ -181,10 +187,15 @@ impl CloudProvider for NextcloudProvider {
         for part in &parts {
             if part.is_empty() { continue; }
             current = format!("{}/{}", current, part);
-            let _ = self.client
+            if self.created_dirs.lock().unwrap().contains(&current) { continue; }
+            let resp = self.client
                 .request(Method::from_bytes(b"MKCOL").unwrap(), self.url(&current))
                 .basic_auth(&self.username, Some(&self.password))
                 .send().await;
+            // 201 created, 405 already exists
+            if resp.is_ok_and(|r| r.status().is_success() || r.status().as_u16() == 405) {
+                self.created_dirs.lock().unwrap().insert(current.clone());
+            }
         }
         Ok(())
     }
@@ -204,6 +215,10 @@ impl CloudProvider for NextcloudProvider {
         let rate = if elapsed > 0 { size as u128 * 1000 / elapsed / 1024 } else { 0 };
         debug!("[Nextcloud] upload done {} → status={} time={}ms rate={}KB/s",
             remote_path, resp.status(), elapsed, rate);
+        if !resp.status().is_success() {
+            error!("[Nextcloud] upload failed {} status={}", remote_path, resp.status());
+            return Err(AppError::Cloud(format!("Upload failed {} ({})", remote_path, resp.status())));
+        }
         Ok(())
     }
 
@@ -237,7 +252,8 @@ impl CloudProvider for NextcloudProvider {
         self.client.put(self.url(remote_path))
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/json")
-            .body(content.to_string()).send().await.map_err(|e| AppError::Http(e.to_string()))?;
+            .body(content.to_string()).send().await.map_err(|e| AppError::Http(e.to_string()))?
+            .error_for_status().map_err(|e| AppError::Cloud(e.to_string()))?;
         Ok(())
     }
 
@@ -259,6 +275,9 @@ impl CloudProvider for NextcloudProvider {
         if !resp.status().is_success() && s != 404 {
             return Err(AppError::Cloud(format!("Delete failed: {}", s)));
         }
+        let prefix = format!("/{}", remote_path.trim_matches('/'));
+        self.created_dirs.lock().unwrap()
+            .retain(|d| d != &prefix && !d.starts_with(&format!("{}/", prefix)));
         Ok(())
     }
 }
