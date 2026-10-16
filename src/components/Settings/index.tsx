@@ -9,14 +9,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const { settings, setSettings, setCloudStatus, addToast, cloudStatus } = useStore();
   const ipc = useIpc();
   const [tab, setTab] = useState<Tab>('steam');
-  const [local, setLocal] = useState<AppSettings | null>(settings ? { backupPath: '', ...settings } : null);
+  const [local, setLocal] = useState<AppSettings | null>(settings ? { ...settings, backupPath: settings.backupPath ?? '' } : null);
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState<CloudProviderType | null>(null);
   const [gdriveStep, setGdriveStep] = useState<'form'|'code'>('form');
   const [gdriveAuthUrl, setGdriveAuthUrl] = useState('');
   const [gdriveCode, setGdriveCode] = useState('');
 
-  useEffect(() => { if (settings) setLocal({ backupPath: '', ...settings }); }, [settings]);
+  useEffect(() => { if (settings) setLocal({ ...settings, backupPath: settings.backupPath ?? '' }); }, [settings]);
   if (!local) return null;
 
   const set = (p: Partial<AppSettings>) => setLocal((prev) => ({ ...prev!, ...p }));
@@ -189,7 +189,7 @@ function VersionBadge() {
 // ─── Debug Tab ────────────────────────────────────────────────────────────────
 
 function DebugTab({ ipc, local, setLocal }: {
-  ipc: any;
+  ipc: ReturnType<typeof useIpc>;
   local: any;
   setLocal: (p: any) => void;
 }) {

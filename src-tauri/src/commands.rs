@@ -139,7 +139,7 @@ pub fn gdrive_get_auth_url() -> Res<String> {
 }
 
 #[tauri::command]
-pub async fn gdrive_exchange_code(code: String, state: State<'_, AppState>) -> Res<()> {
+pub async fn gdrive_exchange_code(code: String, _state: State<'_, AppState>) -> Res<()> {
     let s = settings::load();
     let cfg: GoogleDriveConfig = serde_json::from_value(
         s.cloud_providers["google_drive"]["googleDrive"].clone()
@@ -389,11 +389,29 @@ pub async fn open_images_dialog(app: AppHandle) -> Res<Vec<String>> {
                 .map(|f| f.to_string()).collect());
         });
     let files: Vec<String> = rx.await.unwrap_or_default();
-    // Let the webview preview the picked images through the asset protocol
-    for f in &files {
-        let _ = app.asset_protocol_scope().allow_file(f);
-    }
     Ok(files)
+}
+
+/// Lit une image locale et la renvoie en data URL (le protocole asset ne
+/// s'affiche pas de façon fiable dans la webview Linux).
+#[tauri::command]
+pub async fn read_image(path: String) -> Res<String> {
+    use base64::Engine;
+    const MAX_SIZE: u64 = 25 * 1024 * 1024;
+    let ext = std::path::Path::new(&path).extension()
+        .and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase()).unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => return Err("Unsupported image type".into()),
+    };
+    let meta = tokio::fs::metadata(&path).await.map_err(e)?;
+    if !meta.is_file() || meta.len() > MAX_SIZE { return Err("Invalid image file".into()); }
+    let bytes = tokio::fs::read(&path).await.map_err(e)?;
+    Ok(format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 // ─── Cloud scan ───────────────────────────────────────────────────────────────
@@ -547,7 +565,7 @@ pub fn get_log_path() -> String {
 }
 
 #[tauri::command]
-pub fn set_debug_logging(enabled: bool, app: AppHandle) -> Res<()> {
+pub fn set_debug_logging(enabled: bool) -> Res<()> {
     let mut s = settings::load();
     s.debug_logging = Some(enabled);
     settings::save(&s).map_err(e)?;
@@ -557,12 +575,12 @@ pub fn set_debug_logging(enabled: bool, app: AppHandle) -> Res<()> {
 
 #[tauri::command]
 pub fn open_log_folder(app: AppHandle) -> Res<()> {
-    use tauri_plugin_shell::ShellExt;
+    use tauri_plugin_opener::OpenerExt;
     let path = crate::logger::log_path();
     let folder = path.parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string());
-    app.shell().open(&folder, None).map_err(|e| e.to_string())
+    app.opener().open_path(folder, None::<&str>).map_err(|e| e.to_string())
 }
 
 // ─── File tree ────────────────────────────────────────────────────────────────
@@ -628,12 +646,14 @@ pub async fn upload_selected_saves(
 
     on_progress.send(serde_json::json!({ "current": 0, "total": total, "currentFile": null, "phase": "uploading" })).ok();
 
-    let jobs: Vec<(String, String)> = payload.selected_paths.iter()
-        .filter_map(|rel| {
-            let local = save_root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            (local.exists() && !local.is_dir())
-                .then(|| (local.to_string_lossy().into_owned(), format!("{}/{}", cloud_saves, rel)))
-        }).collect();
+    // Les chemins viennent du front : on refuse `..`, absolus et préfixes de lecteur.
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for rel in &payload.selected_paths {
+        let local = saves::safe_join(save_root, rel).map_err(e)?;
+        if local.exists() && !local.is_dir() {
+            jobs.push((local.to_string_lossy().into_owned(), format!("{}/{}", cloud_saves, rel.replace('\\', "/"))));
+        }
+    }
     let file_count = jobs.len() as u32;
     let pr = p.as_ref();
     saves::transfer_all(jobs, |l, r| async move { pr.upload_file(&l, &r).await }, |n, name| {
