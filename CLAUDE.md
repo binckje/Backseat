@@ -16,7 +16,7 @@ Appli desktop **Tauri 2** (Rust + React/TS, Zustand, Vite), v1.6.1. Partage de s
 ```bash
 npm install && npm run dev        # dev
 npm run build                     # AppImage/.deb/NSIS
-./scripts/build-linux.sh             # build interactif Linux (pull -> AppImage/deb/rpm)
+./scripts/build-linux.sh             # build interactif Linux (pull -> AppImage/deb/rpm) ; dossier par défaut = parent du dossier scripts/, à confirmer
 # Windows : powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 (pull -> exe/msi)
 cd src-tauri && cargo check       # vérif Rust (Linux : libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev)
 npx tsc --noEmit                  # vérif TS
@@ -29,7 +29,7 @@ npx tsc --noEmit                  # vérif TS
 - **Point 4** : CSP définie dans `tauri.conf.json` (`csp` + `devCsp` qui autorise en plus le serveur Vite `localhost:5173`). Scripts limités à `'self'` ; images `https:` autorisées (jaquettes Heroic sur des CDN variés, avatars Steam) ; `style-src 'unsafe-inline'` gardé pour les styles inline React/Vite.
 - **Point 5** : doublon `scan_cloud_games` retiré de `generate_handler!` (`lib.rs`).
 - **Point 6** : supprimé `src/App.tsx.bck` et les logos Epic/GOG inutilisés de `src-tauri/icons/` (restent : icônes de l'appli).
-- **Images de sauvegarde** : lues côté Rust (`read_image`, extensions image uniquement, 25 Mo max) et affichées en data URL via `components/common/LocalImage.tsx`. Le protocole asset (`convertFileSrc`) a été retiré : il ne s'affichait pas dans la webview Linux. `file://` ne marche pas non plus.
+- **Images de sauvegarde** : lues côté Rust (`read_image`, extensions image uniquement, 25 Mo max) et affichées en data URL via `components/common/LocalImage.tsx`. Le protocole asset (`convertFileSrc`) a été retiré : il ne s'affichait pas dans la webview Linux. `file://` ne marche pas non plus. Visionneuse (`ImageViewer.tsx`) : fenêtre ajustée à l'image (taille réelle, défilement au-delà de l'écran) + bouton Télécharger (`save_image_as`, boîte d'enregistrement).
 - **Dates dans l'explorateur** : `FileTreeNode.modified` (Unix ms ; mtime local, `getlastmodified` WebDAV côté cloud), affiché dans `SaveTreeModal`.
 - **Bouton Actualiser** sur `GameCard` : relit permissions + notes/images du jeu (`loadCloudData`).
 - **Perf** : UI affichée dès lecture config/jeux, connexion + statuts + scan cloud en arrière-plan (indicateur dans la barre de titre). `AppState::provider()` clone un `Arc` et relâche le verrou tout de suite (plus de sérialisation des opérations cloud). Transferts en flux parallèle (`saves::transfer_all`, `CONCURRENCY` = 6). Statuts, scan cloud, listings récursifs, métadonnées et images en parallèle (`join_all`). Nextcloud : cache des dossiers créés (avant : un MKCOL par segment de chemin pour chaque fichier) et erreur remontée si un PUT échoue.

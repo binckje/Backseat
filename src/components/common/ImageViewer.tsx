@@ -1,18 +1,30 @@
 import React, { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { LocalImage } from './LocalImage';
+import { Icon } from './Icon';
+import { useStore } from '../../store/index';
 export function ImageViewerModal({ images, onClose }: { images: string[]; onClose: () => void }) {
   const [idx, setIdx] = useState(0);
   const prev = () => setIdx((i) => (i - 1 + images.length) % images.length);
   const next = () => setIdx((i) => (i + 1) % images.length);
+  const { addToast } = useStore();
+  const download = async () => {
+    try {
+      if (await invoke<boolean>('save_image_as', { path: images[idx] })) addToast({ type: 'success', message: 'Image enregistrée.' });
+    } catch (err) {
+      addToast({ type: 'error', message: `Échec de l'enregistrement : ${err}` });
+    }
+  };
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} style={{ alignItems:'center',justifyContent:'center' }}>
-      <div style={{ background:'var(--surface)',borderRadius:12,border:'1px solid var(--border2)',padding:16,maxWidth:'90vw',maxHeight:'90vh',display:'flex',flexDirection:'column',gap:12 }}>
+      <div style={{ background:'var(--surface)',borderRadius:12,border:'1px solid var(--border2)',padding:16,width:'max-content',maxWidth:'90vw',maxHeight:'90vh',display:'flex',flexDirection:'column',gap:12 }}>
         <div style={{ display:'flex',alignItems:'center',gap:10 }}>
           <span style={{ flex:1,fontSize:13,color:'var(--text2)' }}>Image {idx+1} / {images.length}</span>
+          <button className="btn btn--secondary btn--sm" onClick={download} title="Télécharger l'image" style={{ display:'flex',alignItems:'center',gap:5 }}><Icon name="download" size={13}/>Télécharger</button>
           <button className="modal__close" onClick={onClose}>×</button>
         </div>
         <div style={{ overflow:'auto',maxWidth:'calc(90vw - 32px)',maxHeight:'calc(90vh - 140px)',minHeight:0,flexShrink:1 }}>
-          {/* Taille réelle ; défilement si l'image dépasse l'écran */}
+          {/* Taille réelle, fenêtre ajustée à l'image ; défilement si elle dépasse l'écran */}
           <LocalImage path={images[idx]} alt="" style={{ display:'block',maxWidth:'none',flexShrink:0,borderRadius:8 }} />
         </div>
         {images.length > 1 && (
