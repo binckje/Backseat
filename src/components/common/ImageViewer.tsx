@@ -11,7 +11,10 @@ export function ImageViewerModal({ images, onClose }: { images: string[]; onClos
           <span style={{ flex:1,fontSize:13,color:'var(--text2)' }}>Image {idx+1} / {images.length}</span>
           <button className="modal__close" onClick={onClose}>×</button>
         </div>
-        <LocalImage path={images[idx]} alt="" style={{ maxWidth:'80vw',maxHeight:'70vh',objectFit:'contain',borderRadius:8,display:'block' }} />
+        <div style={{ overflow:'auto',maxWidth:'calc(90vw - 32px)',maxHeight:'calc(90vh - 140px)',minHeight:0,flexShrink:1 }}>
+          {/* Taille réelle ; défilement si l'image dépasse l'écran */}
+          <LocalImage path={images[idx]} alt="" style={{ display:'block',maxWidth:'none',flexShrink:0,borderRadius:8 }} />
+        </div>
         {images.length > 1 && (
           <div style={{ display:'flex',justifyContent:'center',gap:12 }}>
             <button className="btn btn--secondary btn--sm" onClick={prev}>← Précédente</button>
