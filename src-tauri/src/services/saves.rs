@@ -3,7 +3,38 @@ use serde::{Serialize, Deserialize};
 use crate::services::cloud::{CloudProvider, game_saves_path, game_notes_path, game_images_path};
 use crate::error::{AppError, Result};
 use log::{info, warn, error};
-use futures::future::join_all;
+use futures::{StreamExt, future::join_all};
+
+/// Number of files transferred at the same time
+pub const CONCURRENCY: usize = 6;
+
+/// Run `op` on every (a, b) pair with up to `CONCURRENCY` transfers in flight.
+/// `on_done(n, name)` is called after each completed transfer with the running
+/// count. Stops at the first error (pending transfers are dropped).
+pub async fn transfer_all<F, Fut>(
+    jobs: Vec<(String, String)>,
+    op: F,
+    mut on_done: impl FnMut(u32, &str),
+) -> Result<()>
+where
+    F: Fn(String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let mut stream = futures::stream::iter(jobs)
+        .map(|(a, b)| {
+            let label = b.rsplit('/').next().unwrap_or(&b).to_string();
+            let fut = op(a, b);
+            async move { fut.await.map(|_| label) }
+        })
+        .buffer_unordered(CONCURRENCY);
+    let mut done = 0u32;
+    while let Some(res) = stream.next().await {
+        let label = res?;
+        done += 1;
+        on_done(done, &label);
+    }
+    Ok(())
+}
 
 /// Joins a cloud-provided relative path onto `root`, rejecting anything that
 /// could escape it (`..`, absolute paths, drive prefixes). Cloud content is
@@ -94,38 +125,20 @@ pub async fn upload(
             "Aucun fichier de sauvegarde trouvé dans : {}", save_path
         )));
     }
-    info!("[Saves] {} files to upload (parallel batches of {})", local_files.len(), 4usize);
+    info!("[Saves] {} files to upload ({} in parallel)", local_files.len(), CONCURRENCY);
     let total = (local_files.len() + image_paths.len() + 1) as u32;
     let mut current = 0u32;
 
-    // Upload save files — parallel batches of CONCURRENCY
-    const CONCURRENCY: usize = 4;
-    let batches: Vec<&[std::path::PathBuf]> = local_files.chunks(CONCURRENCY).collect();
-    let batch_count = batches.len();
-
-    for (batch_idx, chunk) in batches.into_iter().enumerate() {
-        on_progress(ProgressEvent {
-            current,
-            total,
-            current_file: Some(format!(
-                "Lot {}/{} ({} fichier{})",
-                batch_idx + 1, batch_count,
-                chunk.len(), if chunk.len() > 1 { "s" } else { "" }
-            )),
-            phase: "uploading".into(),
-        });
-
-        let pairs: Vec<(String, String)> = chunk.iter().map(|rel| {
-            let local = save_dir.join(rel).to_string_lossy().into_owned();
-            let remote = format!("{}/{}", cloud_saves, rel.to_string_lossy().replace('\\', "/"));
-            (local, remote)
-        }).collect();
-
-        let upload_futs = pairs.iter().map(|(l, r)| cloud.upload_file(l, r));
-        let results = join_all(upload_futs).await;
-        for result in results { result?; }
-        current += chunk.len() as u32;
-    }
+    // Upload save files
+    let jobs: Vec<(String, String)> = local_files.iter().map(|rel| {
+        let local = save_dir.join(rel).to_string_lossy().into_owned();
+        let remote = format!("{}/{}", cloud_saves, rel.to_string_lossy().replace('\\', "/"));
+        (local, remote)
+    }).collect();
+    transfer_all(jobs, |l, r| async move { cloud.upload_file(&l, &r).await }, |n, name| {
+        on_progress(ProgressEvent { current: n, total, current_file: Some(name.to_string()), phase: "uploading".into() });
+    }).await?;
+    current += local_files.len() as u32;
 
     // Upload images
     for (i, img) in image_paths.iter().enumerate() {
@@ -170,39 +183,17 @@ pub async fn download(
         error!("[Saves] no files found on cloud at {}", cloud_saves);
         return Err(AppError::NotFound("No save files found on cloud for this game".into()));
     }
-    info!("[Saves] {} files to download (parallel batches of {})", files.len(), 4usize);
+    info!("[Saves] {} files to download ({} in parallel)", files.len(), CONCURRENCY);
 
     let total = files.len() as u32;
-    let mut current = 0u32;
-
-    // Download save files — parallel batches
-    const CONCURRENCY: usize = 4;
-    let batches: Vec<&[(String, String)]> = files.chunks(CONCURRENCY).collect();
-    let batch_count = batches.len();
-
-    for (batch_idx, chunk) in batches.into_iter().enumerate() {
-        on_progress(ProgressEvent {
-            current,
-            total,
-            current_file: Some(format!(
-                "Lot {}/{} ({} fichier{})",
-                batch_idx + 1, batch_count,
-                chunk.len(), if chunk.len() > 1 { "s" } else { "" }
-            )),
-            phase: "downloading".into(),
-        });
-
-        let pairs: Vec<(String, String)> = chunk.iter().map(|(remote_path, local_rel)| {
-            let local = safe_join(Path::new(local_save_path), local_rel)?
-                .to_string_lossy().into_owned();
-            Ok((remote_path.clone(), local))
-        }).collect::<Result<_>>()?;
-
-        let download_futs = pairs.iter().map(|(r, l)| cloud.download_file(r, l));
-        let results = join_all(download_futs).await;
-        for result in results { result?; }
-        current += chunk.len() as u32;
-    }
+    let jobs: Vec<(String, String)> = files.iter().map(|(remote_path, local_rel)| {
+        let local = safe_join(Path::new(local_save_path), local_rel)?
+            .to_string_lossy().into_owned();
+        Ok((remote_path.clone(), local))
+    }).collect::<Result<_>>()?;
+    transfer_all(jobs, |r, l| async move { cloud.download_file(&r, &l).await }, |n, name| {
+        on_progress(ProgressEvent { current: n, total, current_file: Some(name.to_string()), phase: "downloading".into() });
+    }).await?;
 
     on_progress(ProgressEvent { current: total, total, current_file: None, phase: "finalizing".into() });
     Ok(())
@@ -217,11 +208,12 @@ fn list_recursive<'a>(
     Box::pin(async move {
         let Ok(items) = cloud.list_files(path).await else { return vec![]; };
         let mut result = Vec::new();
-        for item in items {
-            if item.is_directory {
-                let sub = list_recursive(cloud, &item.path, base).await;
-                result.extend(sub);
-            } else {
+        let (dirs, files): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| i.is_directory);
+        for sub in join_all(dirs.iter().map(|d| list_recursive(cloud, &d.path, base))).await {
+            result.extend(sub);
+        }
+        for item in files {
+            {
                 let local_rel = if item.path.starts_with(base) {
                     item.path[base.len()..].trim_start_matches('/').to_string()
                 } else if let Some(idx) = item.path.find(base) {
@@ -238,10 +230,11 @@ fn list_recursive<'a>(
 }
 
 pub async fn fetch_metadata(cloud: &dyn CloudProvider, game_name: &str, app_id: &str) -> CloudSaveMetadata {
-    let notes = cloud.download_text(&game_notes_path(game_name, app_id)).await.ok()
-        .and_then(|t| serde_json::from_str(&t).ok());
-    let image_count = cloud.list_files(&game_images_path(game_name, app_id)).await
-        .unwrap_or_default().iter().filter(|f| !f.is_directory).count() as u32;
+    let notes_path = game_notes_path(game_name, app_id);
+    let images_path = game_images_path(game_name, app_id);
+    let (notes, images) = futures::join!(cloud.download_text(&notes_path), cloud.list_files(&images_path));
+    let notes = notes.ok().and_then(|t| serde_json::from_str(&t).ok());
+    let image_count = images.unwrap_or_default().iter().filter(|f| !f.is_directory).count() as u32;
     CloudSaveMetadata { notes, image_count }
 }
 
@@ -249,12 +242,9 @@ pub async fn download_images(cloud: &dyn CloudProvider, game_name: &str, app_id:
     let images_path = game_images_path(game_name, app_id);
     tokio::fs::create_dir_all(cache_dir).await?;
     let files = cloud.list_files(&images_path).await.unwrap_or_default();
-    let mut local_paths = Vec::new();
-    for f in files.iter().filter(|f| !f.is_directory) {
-        let local = Path::new(cache_dir).join(&f.name);
-        if cloud.download_file(&f.path, local.to_str().unwrap_or("")).await.is_ok() {
-            local_paths.push(local.to_string_lossy().to_string());
-        }
-    }
-    Ok(local_paths)
+    let downloads = files.iter().filter(|f| !f.is_directory).map(|f| async move {
+        let local = safe_join(Path::new(cache_dir), &f.name).ok()?.to_string_lossy().into_owned();
+        cloud.download_file(&f.path, &local).await.ok().map(|_| local)
+    });
+    Ok(join_all(downloads).await.into_iter().flatten().collect())
 }

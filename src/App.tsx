@@ -16,12 +16,13 @@ export default function App() {
   const ipc = useIpc();
   const {
     settings, setSettings, setSharedGames, setCloudStatus,
-    modal, modalData, openModal, closeModal, cloudStatus,
+    modal, modalData, openModal, closeModal, cloudStatus, addToast,
   } = useStore();
   const [version, setVersion] = useState('');
   const [cloudSuggestions, setCloudSuggestions] = useState<CloudGameSuggestion[]>([]);
   const [initMessage, setInitMessage] = useState<string>('Démarrage…');
   const [initDone, setInitDone] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState<string | null>(null);
   const [showSuggest, setShowSuggest] = useState(false);
 
   // Refresh sidebar badges for all shared games
@@ -55,50 +56,43 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const vr = await ipc.app.getVersion();
+      // Local data first: the UI is shown as soon as settings and games are read
+      setInitMessage('Chargement…');
+      const [vr, sr, gr] = await Promise.all([ipc.app.getVersion(), ipc.settings.get(), ipc.games.getShared()]);
       if (vr.success && vr.data) setVersion(String(vr.data));
+      if (gr.success && gr.data) setSharedGames(gr.data as SharedGame[]);
+      const s = sr.success && sr.data ? sr.data as AppSettings : null;
+      if (s) setSettings(s);
+      setInitDone(true);
 
-      setInitMessage('Chargement des paramètres…');
-      const sr = await ipc.settings.get();
-      if (sr.success && sr.data) {
-        const s = sr.data as AppSettings;
-        setSettings(s);
-
-        if (s.activeCloudProvider) {
-          setInitMessage('Connexion au cloud…');
-          const cr = await ipc.cloud.connect(s.activeCloudProvider);
-          if (cr.success && cr.data) {
-            setCloudStatus({
-              connected: true,
-              providerType: s.activeCloudProvider,
-              userInfo: cr.data as { name: string; email?: string },
-            });
-            setInitMessage('Chargement des jeux…');
-            const gr = await ipc.games.getShared();
-            if (gr.success && gr.data) setSharedGames(gr.data as SharedGame[]);
-            setInitMessage('Vérification du cloud…');
-            await refreshAllStatuses();
-            await ipc.heroic.enrichArt();
-            const gr2 = await ipc.games.getShared();
-            if (gr2.success && gr2.data) setSharedGames(gr2.data as SharedGame[]);
-            await scanCloud();
-          }
+      // Background: Heroic artwork (local) and cloud connection
+      ipc.heroic.enrichArt().then(async (r) => {
+        if (!r.success || !r.data) return;
+        const g = await ipc.games.getShared();
+        if (g.success && g.data) setSharedGames(g.data as SharedGame[]);
+      });
+      if (s?.activeCloudProvider) {
+        setCloudBusy('Connexion au cloud…');
+        const cr = await ipc.cloud.connect(s.activeCloudProvider);
+        setCloudBusy(null);
+        if (cr.success && cr.data) {
+          setCloudStatus({
+            connected: true,
+            providerType: s.activeCloudProvider,
+            userInfo: cr.data as { name: string; email?: string },
+          });
         } else {
-          setInitMessage('Chargement des jeux…');
-          const gr = await ipc.games.getShared();
-          if (gr.success && gr.data) setSharedGames(gr.data as SharedGame[]);
+          addToast({ type: 'error', message: `Connexion au cloud impossible : ${cr.error || 'erreur inconnue'}` });
         }
       }
-      setInitDone(true);
     })();
   }, []);
 
-  // Re-scan and refresh badges when cloud connects mid-session
+  // Refresh badges and scan for new games whenever the cloud connects (in background)
   useEffect(() => {
-    if (cloudStatus.connected) {
-      refreshAllStatuses();
-      scanCloud();
-    }
+    if (!cloudStatus.connected) return;
+    setCloudBusy('Vérification du cloud…');
+    Promise.all([refreshAllStatuses(), scanCloud()]).finally(() => setCloudBusy(null));
   }, [cloudStatus.connected]);
 
   useEffect(() => {
@@ -130,8 +124,13 @@ export default function App() {
           <span>
             {cloudStatus.connected && cloudStatus.providerType
               ? `${providerLabel[cloudStatus.providerType] || cloudStatus.providerType} · ${cloudStatus.userInfo?.name || ''}`
-              : 'Non connecté'}
+              : cloudBusy ? '' : 'Non connecté'}
           </span>
+          {cloudBusy && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text3)' }}>
+              <span className="btn__spinner" style={{ width: 10, height: 10 }} />{cloudBusy}
+            </span>
+          )}
         </div>
         <div className="titlebar__spacer" />
         {version && (

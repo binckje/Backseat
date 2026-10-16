@@ -234,7 +234,12 @@ fn build_cloud_subtree<'a>(
         let Ok(items) = cloud.list_files(path).await else { return vec![]; };
         let mut nodes = Vec::new();
 
-        for item in items {
+        // List all subdirectories concurrently
+        let subtrees = futures::future::join_all(items.iter()
+            .map(|item| async move {
+                if item.is_directory { build_cloud_subtree(cloud, &item.path, base).await } else { vec![] }
+            })).await;
+        for (item, children) in items.iter().zip(subtrees) {
             let name = item.name.clone();
             let rel = if item.path.starts_with(base) {
                 item.path[base.len()..].trim_start_matches('/').to_string()
@@ -243,7 +248,6 @@ fn build_cloud_subtree<'a>(
             };
 
             if item.is_directory {
-                let children = build_cloud_subtree(cloud, &item.path, base).await;
                 nodes.push(FileTreeNode {
                     name, relative_path: rel, is_directory: true, size: 0, modified: None, children,
                 });
