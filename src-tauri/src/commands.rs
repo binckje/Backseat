@@ -365,6 +365,22 @@ pub async fn delete_backup_cmd(app_id: String, timestamp: String) -> Res<()> {
 
 // ─── Dialogs ──────────────────────────────────────────────────────────────────
 
+/// Enregistre une copie d'une image locale à l'emplacement choisi par l'utilisateur.
+#[tauri::command]
+pub async fn save_image_as(path: String, app: AppHandle) -> Res<bool> {
+    use tauri_plugin_dialog::DialogExt;
+    use tokio::sync::oneshot;
+    let name = std::path::Path::new(&path).file_name()
+        .map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "image.png".into());
+    let (tx, rx) = oneshot::channel();
+    app.dialog().file().set_file_name(&name).save_file(move |f| {
+        let _ = tx.send(f.and_then(|p| p.into_path().ok()));
+    });
+    let Some(dest) = rx.await.unwrap_or(None) else { return Ok(false) };
+    tokio::fs::copy(&path, &dest).await.map_err(e)?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn open_folder_dialog(app: AppHandle) -> Res<Option<String>> {
     use tauri_plugin_dialog::DialogExt;

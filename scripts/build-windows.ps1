@@ -28,7 +28,15 @@ if (YesNo "Installer/vérifier les prérequis (Git, Node, Rust, VS Build Tools) 
 foreach ($c in "git", "node", "npm", "cargo") { if (-not (Has $c)) { throw "$c introuvable. Rouvrir le terminal ou installer les prérequis." } }
 
 # 2. Clone ou pull
-$Dir = Ask "Dossier du projet" "$HOME\Backseat"
+# Par défaut : le dossier parent de celui du script (racine du dépôt).
+$DefaultDir = Split-Path -Parent $PSScriptRoot
+$R = Read-Host "Dossier du projet : $DefaultDir, confirmer ? [O/n]"
+if ([string]::IsNullOrWhiteSpace($R) -or $R -match '^[oOyY]$') {
+  $Dir = $DefaultDir
+} else {
+  $Dir = Read-Host "Dossier du projet"
+  if ([string]::IsNullOrWhiteSpace($Dir)) { throw "Dossier vide" }
+}
 $Branch = Ask "Branche" "main"
 if (Test-Path "$Dir\.git") {
   Write-Host "==> Mise à jour de $Dir"

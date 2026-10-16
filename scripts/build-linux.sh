@@ -8,7 +8,15 @@ ask() { local q="$1" def="$2" r; read -rp "$q [$def] : " r; echo "${r:-$def}"; }
 yes() { local r; read -rp "$1 [o/N] : " r; [[ "$r" =~ ^[oOyY]$ ]]; }
 
 # 1. Dossier et branche
-DIR=$(ask "Dossier du projet" "$HOME/Backseat")
+# Par défaut : le dossier parent de celui du script (racine du dépôt).
+DEFAULT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+read -rp "Dossier du projet : $DEFAULT_DIR, confirmer ? [O/n] : " R
+if [[ -z "$R" || "$R" =~ ^[oOyY]$ ]]; then
+  DIR="$DEFAULT_DIR"
+else
+  read -rp "Dossier du projet : " DIR
+  [[ -n "$DIR" ]] || { echo "Dossier vide" >&2; exit 1; }
+fi
 BRANCH=$(ask "Branche" "main")
 
 if [[ -d "$DIR/.git" ]]; then
