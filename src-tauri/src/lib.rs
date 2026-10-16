@@ -41,7 +41,6 @@ pub fn run() {
             detect_heroic_path, get_heroic_games, suggest_heroic_save_paths,
             enrich_heroic_art,
             // Cloud scan
-            scan_cloud_games,
             // File tree
             get_local_save_tree, get_cloud_save_tree,
             upload_selected_saves, download_selected_saves,
