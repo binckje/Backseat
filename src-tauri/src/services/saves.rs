@@ -5,6 +5,29 @@ use crate::error::{AppError, Result};
 use log::{info, warn, error};
 use futures::future::join_all;
 
+/// Joins a cloud-provided relative path onto `root`, rejecting anything that
+/// could escape it (`..`, absolute paths, drive prefixes). Cloud content is
+/// shared with friends and must not be trusted to stay inside the save folder.
+pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf> {
+    use std::path::Component;
+    let rel_path = Path::new(rel);
+    let mut out = root.to_path_buf();
+    let mut has_part = false;
+    for part in rel.split(['/', '\\']) {
+        if part.is_empty() || part == "." { continue; }
+        for comp in Path::new(part).components() {
+            match comp {
+                Component::Normal(c) => { out.push(c); has_part = true; }
+                _ => return Err(AppError::Permission(format!("Unsafe path rejected: {}", rel))),
+            }
+        }
+    }
+    if !has_part || rel_path.is_absolute() {
+        return Err(AppError::Permission(format!("Unsafe path rejected: {}", rel)));
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotesData {
@@ -170,11 +193,10 @@ pub async fn download(
         });
 
         let pairs: Vec<(String, String)> = chunk.iter().map(|(remote_path, local_rel)| {
-            let local = Path::new(local_save_path)
-                .join(local_rel.replace('/', std::path::MAIN_SEPARATOR_STR))
+            let local = safe_join(Path::new(local_save_path), local_rel)?
                 .to_string_lossy().into_owned();
-            (remote_path.clone(), local)
-        }).collect();
+            Ok((remote_path.clone(), local))
+        }).collect::<Result<_>>()?;
 
         let download_futs = pairs.iter().map(|(r, l)| cloud.download_file(r, l));
         let results = join_all(download_futs).await;
