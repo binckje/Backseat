@@ -33,14 +33,13 @@ npx tsc --noEmit                  # vérif TS
 - **Dates dans l'explorateur** : `FileTreeNode.modified` (Unix ms ; mtime local, `getlastmodified` WebDAV côté cloud), affiché dans `SaveTreeModal`.
 - **Bouton Actualiser** sur `GameCard` : relit permissions + notes/images du jeu (`loadCloudData`).
 - **Perf** : UI affichée dès lecture config/jeux, connexion + statuts + scan cloud en arrière-plan (indicateur dans la barre de titre). `AppState::provider()` clone un `Arc` et relâche le verrou tout de suite (plus de sérialisation des opérations cloud). Transferts en flux parallèle (`saves::transfer_all`, `CONCURRENCY` = 6). Statuts, scan cloud, listings récursifs, métadonnées et images en parallèle (`join_all`). Nextcloud : cache des dossiers créés (avant : un MKCOL par segment de chemin pour chaque fichier) et erreur remontée si un PUT échoue.
-- Branches : `claude/dreamy-pascal-e9xoo7` (points 3, 8, mergée PR #1), `claude/dazzling-knuth-0j3t6a` (points 2, 4, 5, 6 + fonctionnalités ci-dessus).
+- **Nettoyage** : `cargo check` et `tsc --noEmit` sans warning ni erreur. `tauri-plugin-shell` remplacé par `tauri-plugin-opener` (`open_log_folder`, capability `opener:default`). `UPLOAD_URL`/`find_id` gardés avec `#[allow(dead_code)]` pour le futur provider Google Drive. `upload_selected_saves` valide les chemins du front via `safe_join` (un chemin invalide fait échouer l'upload).
+- Branches : `claude/dreamy-pascal-e9xoo7` (points 3, 8, mergée PR #1), `claude/dazzling-knuth-0j3t6a` (points 2, 4, 5, 6 + fonctionnalités ci-dessus), `claude/wizardly-lamport-b1vot7` (nettoyage warnings/tsc, validation upload).
 
 ## À faire (par priorité)
 1. **Point 7** : pas de tests, de CI ni de linter.
-2. Warnings `cargo check` existants : `commands.rs:142,558,573`, `googledrive.rs:11,82`.
-3. Optionnel : `upload_selected_saves` fait confiance aux chemins relatifs envoyés par le front (moins critique).
-4. Erreurs `tsc` existantes dans `src/components/Settings/index.tsx` (`backupPath` en double, `r` implicite any).
-5. Google Drive : `list_files`/`exists` sont des stubs (provider incomplet).
+2. `@tauri-apps/plugin-shell` dans `package.json` n'est plus utilisé (à retirer avec `npm uninstall`).
+3. Google Drive : `list_files`/`exists` sont des stubs (provider incomplet).
 
 ## Préférences utilisateur
 Réponses en français, concises. Donner des étapes de test manuel quand Claude ne peut pas tester lui-même.

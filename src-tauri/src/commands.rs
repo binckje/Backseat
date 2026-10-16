@@ -139,7 +139,7 @@ pub fn gdrive_get_auth_url() -> Res<String> {
 }
 
 #[tauri::command]
-pub async fn gdrive_exchange_code(code: String, state: State<'_, AppState>) -> Res<()> {
+pub async fn gdrive_exchange_code(code: String, _state: State<'_, AppState>) -> Res<()> {
     let s = settings::load();
     let cfg: GoogleDriveConfig = serde_json::from_value(
         s.cloud_providers["google_drive"]["googleDrive"].clone()
@@ -547,7 +547,7 @@ pub fn get_log_path() -> String {
 }
 
 #[tauri::command]
-pub fn set_debug_logging(enabled: bool, app: AppHandle) -> Res<()> {
+pub fn set_debug_logging(enabled: bool) -> Res<()> {
     let mut s = settings::load();
     s.debug_logging = Some(enabled);
     settings::save(&s).map_err(e)?;
@@ -557,12 +557,12 @@ pub fn set_debug_logging(enabled: bool, app: AppHandle) -> Res<()> {
 
 #[tauri::command]
 pub fn open_log_folder(app: AppHandle) -> Res<()> {
-    use tauri_plugin_shell::ShellExt;
+    use tauri_plugin_opener::OpenerExt;
     let path = crate::logger::log_path();
     let folder = path.parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string());
-    app.shell().open(&folder, None).map_err(|e| e.to_string())
+    app.opener().open_path(folder, None::<&str>).map_err(|e| e.to_string())
 }
 
 // ─── File tree ────────────────────────────────────────────────────────────────
@@ -628,12 +628,14 @@ pub async fn upload_selected_saves(
 
     on_progress.send(serde_json::json!({ "current": 0, "total": total, "currentFile": null, "phase": "uploading" })).ok();
 
-    let jobs: Vec<(String, String)> = payload.selected_paths.iter()
-        .filter_map(|rel| {
-            let local = save_root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            (local.exists() && !local.is_dir())
-                .then(|| (local.to_string_lossy().into_owned(), format!("{}/{}", cloud_saves, rel)))
-        }).collect();
+    // Les chemins viennent du front : on refuse `..`, absolus et préfixes de lecteur.
+    let mut jobs: Vec<(String, String)> = Vec::new();
+    for rel in &payload.selected_paths {
+        let local = saves::safe_join(save_root, rel).map_err(e)?;
+        if local.exists() && !local.is_dir() {
+            jobs.push((local.to_string_lossy().into_owned(), format!("{}/{}", cloud_saves, rel.replace('\\', "/"))));
+        }
+    }
     let file_count = jobs.len() as u32;
     let pr = p.as_ref();
     saves::transfer_all(jobs, |l, r| async move { pr.upload_file(&l, &r).await }, |n, name| {

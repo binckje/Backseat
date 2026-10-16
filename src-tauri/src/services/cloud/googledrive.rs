@@ -8,6 +8,7 @@ use crate::error::{AppError, Result};
 const AUTH_URL: &str  = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DRIVE_URL: &str = "https://www.googleapis.com/drive/v3";
+#[allow(dead_code)] // à utiliser quand l'upload Google Drive sera implémenté
 const UPLOAD_URL: &str = "https://www.googleapis.com/upload/drive/v3/files";
 const REDIRECT_URI: &str = "urn:ietf:wg:oauth:2.0:oob";
 
@@ -79,6 +80,7 @@ impl GoogleDriveProvider {
             .ok_or_else(|| AppError::Cloud("No access token".into()))
     }
 
+    #[allow(dead_code)] // pour list_files/exists (encore des stubs)
     async fn find_id(&mut self, path: &str) -> Result<Option<String>> {
         if let Some(id) = self.id_cache.get(path) { return Ok(Some(id.clone())); }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
