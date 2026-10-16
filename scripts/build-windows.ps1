@@ -1,6 +1,12 @@
-# Build interactif de Backseat sous Windows : clone/pull GitHub -> dépendances -> tauri build.
+﻿# Build interactif de Backseat sous Windows : clone/pull GitHub -> dépendances -> tauri build.
 # Lancer : powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
 $ErrorActionPreference = "Stop"
+# Toute erreur : message affiché et pause, pour que la fenêtre ne se ferme pas sans explication.
+trap {
+  Write-Host "`nERREUR : $_" -ForegroundColor Red
+  Read-Host "Appuyer sur Entrée pour fermer"
+  exit 1
+}
 $RepoUrl = "https://github.com/binckje/Backseat.git"
 
 function Ask($q, $def) { $r = Read-Host "$q [$def]"; if ([string]::IsNullOrWhiteSpace($r)) { $def } else { $r } }
@@ -51,7 +57,10 @@ Set-Location $Dir
 Write-Host "Rust : $(rustc --version) | Node : $(node --version)"
 
 # 3. Dépendances JS
-npm ci; if ($LASTEXITCODE -ne 0) { npm install; Check }
+$ErrorActionPreference = "Continue"
+npm ci; if ($LASTEXITCODE -ne 0) { npm install }
+$ErrorActionPreference = "Stop"
+Check
 
 # 4. Mode
 Write-Host "1) Lancer en dev (npm run dev)"
@@ -60,15 +69,22 @@ Write-Host "3) Build installeur MSI"
 Write-Host "4) Build .exe + .msi"
 switch (Ask "Choix" "4") {
   "1" { npm run dev; exit }
-  "2" { $Bundles = "nsis" }
-  "3" { $Bundles = "msi" }
-  "4" { $Bundles = "nsis,msi" }
+  "2" { $Bundles = @("nsis") }
+  "3" { $Bundles = @("msi") }
+  "4" { $Bundles = @("nsis", "msi") }
   default { throw "Choix invalide" }
 }
 
-npm run build -- --bundles $Bundles; Check
+# npx plutôt que "npm run build -- ..." : PowerShell supprime le "--" quand il appelle npm.ps1,
+# et npm interprète alors --bundles comme sa propre option.
+# cargo écrit sa progression sur stderr : ne pas la transformer en erreur bloquante.
+$ErrorActionPreference = "Continue"
+npx tauri build --bundles @Bundles
+$ErrorActionPreference = "Stop"
+Check
 
 $Out = "src-tauri\target\release\bundle"
 Write-Host "==> Terminé. Paquets :"
 Get-ChildItem $Out -Recurse -Include *.exe, *.msi | ForEach-Object { $_.FullName }
 Write-Host "Exe portable (sans installeur) : src-tauri\target\release\backseat.exe"
+Read-Host "Appuyer sur Entrée pour fermer"
