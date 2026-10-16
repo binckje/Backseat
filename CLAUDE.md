@@ -26,13 +26,13 @@ npx tsc --noEmit                  # vérif TS
 - **Point 2** : secrets (clé API Steam, mots de passe Nextcloud/kDrive, `clientSecret`/tokens Google) stockés dans le trousseau OS via la crate `keyring` (`services/secure.rs`, cache mémoire). Branché de façon transparente dans `settings::load/save` (liste `SECRETS`) ; migration auto d'un ancien `config.json` en clair au premier chargement ; si le trousseau est indisponible, le secret reste dans le JSON (log warning). Linux : nécessite `libdbus-1-dev` au build et un Secret Service (GNOME Keyring/KWallet) à l'exécution.
 - **Point 4** : CSP définie dans `tauri.conf.json` (`csp` + `devCsp` qui autorise en plus le serveur Vite `localhost:5173`). Scripts limités à `'self'` ; images `https:` autorisées (jaquettes Heroic sur des CDN variés, avatars Steam) ; `style-src 'unsafe-inline'` gardé pour les styles inline React/Vite.
 - **Point 5** : doublon `scan_cloud_games` retiré de `generate_handler!` (`lib.rs`).
-- Branches : `claude/dreamy-pascal-e9xoo7` (points 3, 8, mergée PR #1), `claude/dazzling-knuth-0j3t6a` (points 2, 4, 5).
+- **Point 6** : supprimé `src/App.tsx.bck` et les logos Epic/GOG inutilisés de `src-tauri/icons/` (restent : icônes de l'appli).
+- Branches : `claude/dreamy-pascal-e9xoo7` (points 3, 8, mergée PR #1), `claude/dazzling-knuth-0j3t6a` (points 2, 4, 5, 6).
 
 ## À faire (par priorité)
-1. **Point 6** : supprimer `src/App.tsx.bck` et les icônes en double/mal nommées dans `src-tauri/icons/`.
-2. **Point 7** : pas de tests, de CI ni de linter.
-3. Warnings `cargo check` existants : `commands.rs:142,558,573`, `googledrive.rs:11,82`.
-4. Optionnel : `upload_selected_saves` fait confiance aux chemins relatifs envoyés par le front (moins critique).
+1. **Point 7** : pas de tests, de CI ni de linter.
+2. Warnings `cargo check` existants : `commands.rs:142,558,573`, `googledrive.rs:11,82`.
+3. Optionnel : `upload_selected_saves` fait confiance aux chemins relatifs envoyés par le front (moins critique).
 
 ## Préférences utilisateur
 Réponses en français, concises. Donner des étapes de test manuel quand Claude ne peut pas tester lui-même.
