@@ -398,7 +398,12 @@ pub async fn open_images_dialog(app: AppHandle) -> Res<Vec<String>> {
             let _ = tx.send(files.unwrap_or_default().iter()
                 .map(|f| f.to_string()).collect());
         });
-    Ok(rx.await.unwrap_or_default())
+    let files: Vec<String> = rx.await.unwrap_or_default();
+    // Let the webview preview the picked images through the asset protocol
+    for f in &files {
+        let _ = app.asset_protocol_scope().allow_file(f);
+    }
+    Ok(files)
 }
 
 // ─── Cloud scan ───────────────────────────────────────────────────────────────

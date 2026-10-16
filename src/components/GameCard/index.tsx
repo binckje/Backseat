@@ -4,6 +4,7 @@ import { SaveTreeModal } from '../SaveTreeModal/index';
 import { useIpc } from '../../hooks/useIpc';
 import { Icon } from '../common/Icon';
 import type { SharedGame, GamePermissions, CloudSaveInfo, ProgressEvent, SteamFriend } from '../../types/index';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 export function GameCard() {
   const { sharedGames, selectedAppId } = useStore();
@@ -264,7 +265,7 @@ function GameCardInner({ game }: { game: SharedGame }) {
               </div>
               <div className="field"><label className="label">Screenshots ({selectedImages.length} sélectionné{selectedImages.length>1?'s':''})</label>
                 <button className="btn btn--secondary btn--sm" onClick={async()=>{ const r=await ipc.dialog.openImages(); if(r.success&&r.data) setSelectedImages(r.data as string[]); }} style={{display:'flex',alignItems:'center',gap:5}}><Icon name="image" size={13}/>Choisir des images</button>
-                {selectedImages.length>0 && <div className="img-gallery" style={{marginTop:8}}>{selectedImages.map((img)=><img key={img} className="img-thumb" src={`file://${img}`} alt=""/>)}</div>}
+                {selectedImages.length>0 && <div className="img-gallery" style={{marginTop:8}}>{selectedImages.map((img)=><img key={img} className="img-thumb" src={convertFileSrc(img)} alt=""/>)}</div>}
               </div>
               {uploading
                 ? <InlineProgress event={uploadProgress} pct={pct(uploadProgress)} label="Upload" color="var(--accent)" />
