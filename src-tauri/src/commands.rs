@@ -306,9 +306,10 @@ pub async fn download_save(app_id: String, on_progress: tauri::ipc::Channel<serd
     }
 
     // Backup existing saves
+    // Abort if the backup fails: downloading would overwrite saves with no way back.
     let ts = backup::create(&s.steam_id, &app_id, &game.save_path,
         if s.backup_path.is_empty() { None } else { Some(s.backup_path.as_str()) })
-        .await.unwrap_or_default();
+        .await.map_err(|err| format!("Backup failed, download aborted: {}", err))?;
 
     // Lock
     permissions::lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await.map_err(e)?;
@@ -709,32 +710,36 @@ pub async fn download_selected_saves(
         return Err(format!("Save locked by {}", perms.locked_by.as_deref().unwrap_or("unknown")));
     }
 
-    // Full backup before any download
+    // Validate every target path before touching anything on disk
+    let save_root = Path::new(&game.save_path);
+    let locals: Vec<String> = selected_paths.iter()
+        .map(|rel| saves::safe_join(save_root, rel).map(|p| p.to_string_lossy().into_owned()))
+        .collect::<std::result::Result<_, _>>().map_err(e)?;
+
+    // Full backup before any download — abort if it fails, saves would be lost otherwise
     let custom = if s.backup_path.is_empty() { None } else { Some(s.backup_path.as_str()) };
-    let ts = backup::create(&s.steam_id, &app_id, &game.save_path, custom).await.unwrap_or_default();
+    let ts = backup::create(&s.steam_id, &app_id, &game.save_path, custom).await
+        .map_err(|err| format!("Backup failed, download aborted: {}", err))?;
 
     // Lock
     permissions::lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await.map_err(e)?;
 
     let cloud_saves = crate::services::cloud::game_saves_path(&game.name, &app_id);
-    let save_root = Path::new(&game.save_path);
     let total = selected_paths.len() as u32;
     let mut current = 0u32;
 
     on_progress.send(serde_json::json!({ "current": 0, "total": total, "currentFile": null, "phase": "downloading" })).ok();
 
     const CONCURRENCY: usize = 4;
-    for (batch_idx, chunk) in selected_paths.chunks(CONCURRENCY).enumerate() {
+    let indexed: Vec<(&String, &String)> = selected_paths.iter().zip(locals.iter()).collect();
+    for (batch_idx, chunk) in indexed.chunks(CONCURRENCY).enumerate() {
         on_progress.send(serde_json::json!({
             "current": current, "total": total,
             "currentFile": format!("Lot {}/{}", batch_idx + 1, (selected_paths.len() + CONCURRENCY - 1) / CONCURRENCY),
             "phase": "downloading"
         })).ok();
-        let pairs: Vec<(String, String)> = chunk.iter().map(|rel| {
-            let remote = format!("{}/{}", cloud_saves, rel);
-            let local = save_root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
-                .to_string_lossy().into_owned();
-            (remote, local)
+        let pairs: Vec<(String, String)> = chunk.iter().map(|(rel, local)| {
+            (format!("{}/{}", cloud_saves, rel), (*local).clone())
         }).collect();
         let futs = pairs.iter().map(|(r, l)| p.download_file(r, l));
         let results = join_all(futs).await;
