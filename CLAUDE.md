@@ -16,6 +16,8 @@ Appli desktop **Tauri 2** (Rust + React/TS, Zustand, Vite), v1.6.1. Partage de s
 ```bash
 npm install && npm run dev        # dev
 npm run build                     # AppImage/.deb/NSIS
+./scripts/build-linux.sh             # build interactif Linux (pull -> AppImage/deb/rpm)
+# Windows : powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 (pull -> exe/msi)
 cd src-tauri && cargo check       # vérif Rust (Linux : libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev)
 npx tsc --noEmit                  # vérif TS
 ```
