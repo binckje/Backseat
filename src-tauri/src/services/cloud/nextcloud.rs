@@ -145,9 +145,9 @@ impl CloudProvider for NextcloudProvider {
             info!("[Nextcloud] Connected as '{}'", info.name);
             return Ok(info);
         }
-        // Fallback: test WebDAV
+        // Fallback: test WebDAV (fails on bad credentials, see `exists`)
         debug!("[Nextcloud] OCS failed ({}), trying WebDAV fallback", resp.status());
-        self.exists("/backseat").await?;
+        self.exists("/").await?;
         Ok(UserInfo { name: self.username.clone(), email: Some(self.username.clone()), quota: None })
     }
 
@@ -159,7 +159,14 @@ impl CloudProvider for NextcloudProvider {
             .header("Depth", "0")
             .basic_auth(&self.username, Some(&self.password))
             .send().await.map_err(|e| AppError::Http(e.to_string()))?;
-        Ok(resp.status().is_success() || resp.status().as_u16() == 207)
+        let status = resp.status().as_u16();
+        // Without this, bad credentials look like "file not found" and the app
+        // believes it is connected while every request fails
+        if status == 401 || status == 403 {
+            error!("[Nextcloud] access denied ({}) on {}", status, remote_path);
+            return Err(AppError::Cloud(format!("Accès refusé par le serveur ({}) : identifiant ou mot de passe incorrect", status)));
+        }
+        Ok(resp.status().is_success() || status == 207)
     }
 
     async fn list_files(&self, remote_path: &str) -> Result<Vec<CloudFileInfo>> {
