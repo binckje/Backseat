@@ -64,7 +64,7 @@ function GameCardInner({ game }: { game: SharedGame }) {
         setCloudInfo(m.notes);
         setImageCount(m.imageCount || 0);
       }
-      return pRes.success && iRes.success;
+      return pRes.success && iRes.success ? null : (pRes.error || iRes.error || 'erreur inconnue');
     } finally { setLoadingInfo(false); }
   };
 
@@ -77,8 +77,8 @@ function GameCardInner({ game }: { game: SharedGame }) {
   const handleRefresh = async () => {
     if (loadingInfo) return;
     setLocalImages([]);
-    const ok = await loadCloudData();
-    addToast(ok ? { type: 'success', message: 'Infos cloud à jour.' } : { type: 'error', message: 'Échec de la vérification du cloud.' });
+    const err = await loadCloudData();
+    addToast(err === null ? { type: 'success', message: 'Infos cloud à jour.' } : { type: 'error', message: `Échec de la vérification du cloud : ${err}` });
   };
 
   useEffect(() => {
