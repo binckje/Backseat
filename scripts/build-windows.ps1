@@ -47,6 +47,13 @@ $Branch = Ask "Branche" "main"
 if (Test-Path "$Dir\.git") {
   Write-Host "==> Mise à jour de $Dir"
   git -C $Dir fetch origin $Branch; Check
+  # Modifs locales (souvent écrites par un build précédent) : elles bloqueraient le pull.
+  $Dirty = git -C $Dir status --porcelain --untracked-files=no
+  if ($Dirty) {
+    Write-Host "Modifications locales :"; Write-Host ($Dirty -join "`n")
+    if (-not (YesNo "Les mettre de côté (git stash) pour continuer ?")) { throw "Mise à jour annulée (modifications locales)" }
+    git -C $Dir stash push -m "build-windows $(Get-Date -Format s)"; Check
+  }
   git -C $Dir checkout $Branch; Check
   git -C $Dir pull --ff-only origin $Branch; Check
 } else {
