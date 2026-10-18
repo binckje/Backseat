@@ -34,6 +34,7 @@ npx tsc --noEmit                  # vérif TS
 - **Bouton Actualiser** sur `GameCard` : relit permissions + notes/images du jeu (`loadCloudData`).
 - **Perf** : UI affichée dès lecture config/jeux, connexion + statuts + scan cloud en arrière-plan (indicateur dans la barre de titre). `AppState::provider()` clone un `Arc` et relâche le verrou tout de suite (plus de sérialisation des opérations cloud). Transferts en flux parallèle (`saves::transfer_all`, `CONCURRENCY` = 6). Statuts, scan cloud, listings récursifs, métadonnées et images en parallèle (`join_all`). Nextcloud : cache des dossiers créés (avant : un MKCOL par segment de chemin pour chaque fichier) et erreur remontée si un PUT échoue.
 - **Nettoyage** : `cargo check` et `tsc --noEmit` sans warning ni erreur. `tauri-plugin-shell` remplacé par `tauri-plugin-opener` (`open_log_folder`, capability `opener:default`). `UPLOAD_URL`/`find_id` gardés avec `#[allow(dead_code)]` pour le futur provider Google Drive. `upload_selected_saves` valide les chemins du front via `safe_join` (un chemin invalide fait échouer l'upload).
+- **Doc** : `docs/ARCHITECTURE.md` = carte complète du code (fonctions, appelants, flux, où modifier quoi). La mettre à jour après chaque modif de structure.
 - Branches : `claude/dreamy-pascal-e9xoo7` (points 3, 8, mergée PR #1), `claude/dazzling-knuth-0j3t6a` (points 2, 4, 5, 6 + fonctionnalités ci-dessus), `claude/wizardly-lamport-b1vot7` (nettoyage warnings/tsc, validation upload).
 
 ## À faire (par priorité)
