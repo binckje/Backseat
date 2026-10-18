@@ -42,7 +42,6 @@ export interface AppSettings {
   cloudProviders: any;
   sharedGames: SharedGame[]; cachedPlayerInfo?: SteamPlayer;
 }
-export interface UploadPayload { appId: string; description: string; imagePaths: string[]; }
 export interface ProgressEvent {
   current: number; total: number; currentFile?: string;
   phase: 'scanning'|'backing_up'|'uploading'|'downloading'|'finalizing';

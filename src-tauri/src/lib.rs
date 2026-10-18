@@ -30,7 +30,7 @@ pub fn run() {
             // Permissions
             get_permissions, grant_access, revoke_access, release_lock,
             // Saves
-            upload_save, download_save, get_cloud_info, download_images, read_image, save_image_as,
+            get_cloud_info, download_images, read_image, save_image_as,
             // Backup
             list_backups, restore_backup, delete_backup_cmd,
             // Dialogs

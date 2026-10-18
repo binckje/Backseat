@@ -1,5 +1,5 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
-import type { AppSettings, CloudProviderType, UploadPayload, ProgressEvent } from '../types/index';
+import type { AppSettings, CloudProviderType, ProgressEvent } from '../types/index';
 
 async function call<T>(fn: Promise<T>): Promise<{ success: boolean; data?: T; error?: string }> {
   try { return { success: true, data: await fn }; }
@@ -44,16 +44,6 @@ const api = {
     releaseLock: (appId: string) => call(invoke('release_lock', { appId })),
   },
   saves: {
-    upload: (payload: UploadPayload, onProgress: (ev: ProgressEvent) => void) => {
-      const channel = new Channel<ProgressEvent>();
-      channel.onmessage = onProgress;
-      return call(invoke('upload_save', { payload, onProgress: channel }));
-    },
-    download: (appId: string, onProgress: (ev: ProgressEvent) => void) => {
-      const channel = new Channel<ProgressEvent>();
-      channel.onmessage = onProgress;
-      return call(invoke('download_save', { appId, onProgress: channel }));
-    },
     getCloudInfo:   (appId: string) => call(invoke('get_cloud_info', { appId })),
     downloadImages: (appId: string) => call(invoke('download_images', { appId })),
     readImage:      (path: string) => call(invoke<string>('read_image', { path })),
