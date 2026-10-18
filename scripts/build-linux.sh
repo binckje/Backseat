@@ -22,6 +22,13 @@ BRANCH=$(ask "Branche" "main")
 if [[ -d "$DIR/.git" ]]; then
   echo "==> Mise à jour de $DIR"
   git -C "$DIR" fetch origin "$BRANCH"
+  # Modifs locales (souvent écrites par un build précédent) : elles bloqueraient le pull.
+  DIRTY=$(git -C "$DIR" status --porcelain --untracked-files=no)
+  if [[ -n "$DIRTY" ]]; then
+    echo "Modifications locales :"; echo "$DIRTY"
+    yes "Les mettre de côté (git stash) pour continuer ?" || { echo "Mise à jour annulée (modifications locales)" >&2; exit 1; }
+    git -C "$DIR" stash push -m "build-linux $(date -Iseconds)"
+  fi
   git -C "$DIR" checkout "$BRANCH"
   git -C "$DIR" pull --ff-only origin "$BRANCH"
 else
