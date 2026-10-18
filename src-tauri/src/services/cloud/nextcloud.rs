@@ -15,6 +15,9 @@ pub struct NextcloudProvider {
     server_url: String,
     username: String,
     password: String,
+    /// User ID used in WebDAV paths. Can differ from the login name
+    /// (e.g. login with an email): resolved from the OCS API on connect.
+    dav_user: String,
     client: Client,
     /// Directories already created this session: avoids one MKCOL per path
     /// segment for every uploaded file
@@ -29,6 +32,7 @@ impl NextcloudProvider {
             .unwrap_or_default();
         Self {
             server_url: server_url.trim_end_matches('/').to_string(),
+            dav_user: username.clone(),
             username, password, client,
             created_dirs: Mutex::new(HashSet::new()),
         }
@@ -47,14 +51,14 @@ impl NextcloudProvider {
         format!(
             "{}/remote.php/dav/files/{}/{}",
             self.server_url,
-            urlencoding::encode(&self.username),
+            urlencoding::encode(&self.dav_user),
             path.trim_start_matches('/')
         )
     }
 
     /// The DAV path prefix returned in PROPFIND hrefs
     fn dav_prefix(&self) -> String {
-        format!("/remote.php/dav/files/{}", &self.username)
+        format!("/remote.php/dav/files/{}", &self.dav_user)
     }
 
     // ── PROPFIND parsing ─────────────────────────────────────────────────────
@@ -126,8 +130,8 @@ impl NextcloudProvider {
 impl CloudProvider for NextcloudProvider {
     async fn connect(&mut self) -> Result<UserInfo> {
         info!("[Nextcloud] Connecting to {} as {}", self.server_url, self.username);
-        let url = format!("{}/ocs/v2.php/cloud/users/{}",
-            self.server_url, urlencoding::encode(&self.username));
+        // Current user endpoint: works whatever the login name (ID or email)
+        let url = format!("{}/ocs/v2.php/cloud/user", self.server_url);
         let resp = self.client.get(&url)
             .header("OCS-APIRequest", "true")
             .header("Accept", "application/json")
@@ -137,12 +141,15 @@ impl CloudProvider for NextcloudProvider {
         if resp.status().is_success() {
             let j: serde_json::Value = resp.json().await.unwrap_or_default();
             let d = &j["ocs"]["data"];
+            if let Some(id) = d["id"].as_str().filter(|id| !id.is_empty()) {
+                self.dav_user = id.to_string();
+            }
             let info = UserInfo {
                 name: d["displayname"].as_str().unwrap_or(&self.username).to_string(),
                 email: d["email"].as_str().map(|s| s.to_string()),
                 quota: None,
             };
-            info!("[Nextcloud] Connected as '{}'", info.name);
+            info!("[Nextcloud] Connected as '{}' (WebDAV user '{}')", info.name, self.dav_user);
             return Ok(info);
         }
         // Fallback: test WebDAV (fails on bad credentials, see `exists`)
