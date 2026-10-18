@@ -3,7 +3,7 @@ import { useStore } from '../../store/index';
 import { SaveTreeModal } from '../SaveTreeModal/index';
 import { useIpc } from '../../hooks/useIpc';
 import { Icon } from '../common/Icon';
-import type { SharedGame, GamePermissions, CloudSaveInfo, ProgressEvent, SteamFriend } from '../../types/index';
+import type { SharedGame, GamePermissions, CloudSaveInfo, SteamFriend } from '../../types/index';
 import { LocalImage } from '../common/LocalImage';
 
 export function GameCard() {
@@ -27,10 +27,6 @@ function GameCardInner({ game }: { game: SharedGame }) {
   const [imageCount, setImageCount] = useState(0);
   const [localImages, setLocalImages] = useState<string[]>([]);
   const [loadingInfo, setLoadingInfo] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<ProgressEvent | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<ProgressEvent | null>(null);
   const [description, setDescription] = useState('');
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [friends, setFriends] = useState<SteamFriend[]>([]);
@@ -98,43 +94,6 @@ function GameCardInner({ game }: { game: SharedGame }) {
     }
   };
 
-  const handleUpload = async () => {
-    if (uploading) return;
-    setUploading(true); setUploadProgress(null);
-    try {
-      const r = await ipc.saves.upload(
-      { appId: game.appId, description, imagePaths: selectedImages },
-      (ev) => setUploadProgress(ev)
-    );
-    if (r.success) {
-        addToast({ type: 'success', message: 'Sauvegarde uploadée !' });
-        setDescription(''); setSelectedImages([]);
-        const ir = await ipc.saves.getCloudInfo(game.appId);
-        if (ir.success && ir.data) {
-          const m = ir.data as { notes: { description: string; uploaderName: string; uploadedAt: string } | null; imageCount: number };
-          if (m.notes) setCloudInfo(m.notes); setImageCount(m.imageCount || 0);
-        }
-        // Refresh sidebar badge for this game
-        updateSharedGame(game.appId, { cloudInfo: { ...(game.cloudInfo as any || {}), status: 'available', lockedBy: null } });
-      } else { addToast({ type: 'error', message: r.error || 'Erreur upload' }); }
-    } finally { await refreshPerms(); setUploading(false); setUploadProgress(null); }
-  };
-
-  const handleDownload = async () => {
-    if (downloading) return;
-    setDownloading(true); setDownloadProgress(null);
-    try {
-      const r = await ipc.saves.download(game.appId, (ev) => setDownloadProgress(ev));
-      if (r.success) {
-        const d = r.data as { backupTimestamp?: string };
-        addToast({ type: 'success', message: 'Sauvegarde téléchargée ! Backup local créé.' });
-        if (d?.backupTimestamp) updateSharedGame(game.appId, { hasLocalBackup: true, backupTimestamp: d.backupTimestamp });
-        const br = await ipc.backup.list(game.appId);
-        if (br.success && br.data) setBackups(br.data as Array<{ timestamp: string; path: string }>);
-      } else { addToast({ type: 'error', message: r.error || 'Erreur téléchargement' }); }
-    } finally { await refreshPerms(); setDownloading(false); setDownloadProgress(null); }
-  };
-
   const handleReleaseLock = async () => {
     const r = await ipc.permissions.releaseLock(game.appId);
     if (r.success) { addToast({ type: 'success', message: 'Verrou libéré.' }); await refreshPerms(); }
@@ -200,7 +159,6 @@ function GameCardInner({ game }: { game: SharedGame }) {
     }
   };
 
-  const pct = (ev: ProgressEvent | null) => ev && ev.total > 0 ? Math.round((ev.current / ev.total) * 100) : 0;
   const filteredFriends = friends.filter((f) => f.personaName.toLowerCase().includes(friendQuery.toLowerCase()));
 
   return (
@@ -262,12 +220,9 @@ function GameCardInner({ game }: { game: SharedGame }) {
           <div className="section__body">
             {isLockedByOther ? <p className="text-muted text-sm">Cette sauvegarde est utilisée par un autre joueur.</p> : <>
               <p className="text-muted text-sm" style={{marginBottom:12}}>Un backup local sera créé automatiquement avant le téléchargement.</p>
-              {downloading
-                ? <InlineProgress event={downloadProgress} pct={pct(downloadProgress)} label="Téléchargement" color="var(--accent)" />
-                : <button className="btn btn--primary" onClick={() => setTreeModal('download')} style={{display:'flex',alignItems:'center',gap:6}}>
-                    <Icon name="download" size={14}/>Télécharger depuis le cloud
-                  </button>
-              }
+              <button className="btn btn--primary" onClick={() => setTreeModal('download')} style={{display:'flex',alignItems:'center',gap:6}}>
+                <Icon name="download" size={14}/>Télécharger depuis le cloud
+              </button>
             </>}
           </div>
         </div>}
@@ -284,14 +239,11 @@ function GameCardInner({ game }: { game: SharedGame }) {
                 <button className="btn btn--secondary btn--sm" onClick={async()=>{ const r=await ipc.dialog.openImages(); if(r.success&&r.data) setSelectedImages(r.data as string[]); }} style={{display:'flex',alignItems:'center',gap:5}}><Icon name="image" size={13}/>Choisir des images</button>
                 {selectedImages.length>0 && <div className="img-gallery" style={{marginTop:8}}>{selectedImages.map((img)=><LocalImage key={img} className="img-thumb" path={img} alt=""/>)}</div>}
               </div>
-              {uploading
-                ? <InlineProgress event={uploadProgress} pct={pct(uploadProgress)} label="Upload" color="var(--accent)" />
-                : <button className="btn btn--primary"
-                    onClick={() => { setUploadDesc(description); setUploadImages(selectedImages); setTreeModal('upload'); }}
-                    style={{display:'flex',alignItems:'center',gap:6}}>
-                    <Icon name="upload" size={14}/>Uploader sur le cloud
-                  </button>
-              }
+              <button className="btn btn--primary"
+                onClick={() => { setUploadDesc(description); setUploadImages(selectedImages); setTreeModal('upload'); }}
+                style={{display:'flex',alignItems:'center',gap:6}}>
+                <Icon name="upload" size={14}/>Uploader sur le cloud
+              </button>
             </>}
           </div>
         </div>}
@@ -387,43 +339,6 @@ function GameCardInner({ game }: { game: SharedGame }) {
             await refreshPerms();
           }}
         />
-      )}
-    </div>
-  );
-}
-
-function InlineProgress({ event, pct, label, color }: {
-  event: ProgressEvent | null; pct: number; label: string; color: string;
-}) {
-  const phases: Record<string, string> = {
-    scanning: 'Analyse…', backing_up: 'Backup local…',
-    uploading: 'Upload…', downloading: 'Téléchargement…', finalizing: 'Finalisation…',
-  };
-  const phase = event ? (phases[event.phase] || event.phase) : label + '…';
-  const currentFile = event?.currentFile;
-
-  return (
-    <div style={{
-      border: '1px solid var(--border2)', borderRadius: 8,
-      padding: '12px 16px', background: 'var(--surface3)',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
-        <span style={{ color: 'var(--text)', fontWeight: 500 }}>{phase}</span>
-        <span style={{ color, fontWeight: 700 }}>{pct}%</span>
-      </div>
-      <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${pct}%`,
-          background: color, borderRadius: 3,
-          transition: 'width 0.25s ease',
-          boxShadow: `0 0 8px ${color}66`,
-        }} />
-      </div>
-      {currentFile && (
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          title={currentFile}>
-          {currentFile}
-        </div>
       )}
     </div>
   );

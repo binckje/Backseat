@@ -238,86 +238,16 @@ pub async fn release_lock(app_id: String, state: State<'_, AppState>) -> Res<()>
 
 // ─── Saves ────────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UploadPayload {
-    pub app_id: String,
-    pub description: String,
-    pub image_paths: Vec<String>,
-}
-
-#[tauri::command]
-pub async fn upload_save(payload: UploadPayload, on_progress: tauri::ipc::Channel<serde_json::Value>, state: State<'_, AppState>) -> Res<()> {
-    let s = settings::load();
-    let game = s.shared_games.iter().find(|g| g.app_id == payload.app_id)
-        .ok_or("Game not found")?.clone();
-    let p = state.provider().await?;
-
-    // Permission + lock check
-    let mut perms = permissions::read(p.as_ref(), &game.name, &payload.app_id).await;
-    if perms.is_none() {
-        permissions::init(p.as_ref(), &payload.app_id, &game.name, &s.steam_id).await.map_err(e)?;
-        perms = permissions::read(p.as_ref(), &game.name, &payload.app_id).await;
+/// Steam display name of the current user, falling back to the Steam ID
+async fn uploader_name(s: &AppSettings) -> String {
+    if s.steam_api_key.is_empty() || s.steam_id.is_empty() {
+        return s.steam_id.clone();
     }
-    let perms = perms.ok_or("Permissions not found")?;
-    if !permissions::can_write(&perms, &s.steam_id) { return Err("Permission denied".into()); }
-    if permissions::locked_by_other(&perms, &s.steam_id) { return Err("Save is locked by another player".into()); }
-
-    // Resolve actual Steam persona name for the uploader display
-    let uploader_name = if !s.steam_api_key.is_empty() && !s.steam_id.is_empty() {
-        steam::get_player_summaries(&s.steam_api_key, &[s.steam_id.clone()]).await
-            .ok()
-            .and_then(|players| players.into_iter().next())
-            .map(|p| p.persona_name)
-            .unwrap_or_else(|| s.steam_id.clone())
-    } else {
-        s.steam_id.clone()
-    };
-
-    saves::upload(
-        p.as_ref(), &game.name, &payload.app_id, &game.save_path,
-        &payload.description, &payload.image_paths, &s.steam_id, &uploader_name,
-        |ev| { let _ = on_progress.send(serde_json::to_value(&ev).unwrap_or_default()); },
-    ).await.map_err(e)?;
-
-    permissions::mark_uploaded(p.as_ref(), &game.name, &payload.app_id, &s.steam_id).await.map_err(e)
-}
-
-#[tauri::command]
-pub async fn download_save(app_id: String, on_progress: tauri::ipc::Channel<serde_json::Value>, state: State<'_, AppState>) -> Res<serde_json::Value> {
-    let s = settings::load();
-    let game = s.shared_games.iter().find(|g| g.app_id == app_id)
-        .ok_or("Game not found")?.clone();
-    let p = state.provider().await?;
-
-    let perms = permissions::read(p.as_ref(), &game.name, &app_id).await
-        .ok_or("Permissions not found")?;
-    if !permissions::can_read(&perms, &s.steam_id) { return Err("Permission denied".into()); }
-    if permissions::locked_by_other(&perms, &s.steam_id) {
-        return Err(format!("Save locked by {}", perms.locked_by.as_deref().unwrap_or("unknown")));
-    }
-
-    // Backup existing saves
-    // Abort if the backup fails: downloading would overwrite saves with no way back.
-    let ts = backup::create(&s.steam_id, &app_id, &game.save_path,
-        if s.backup_path.is_empty() { None } else { Some(s.backup_path.as_str()) })
-        .await.map_err(|err| format!("Backup failed, download aborted: {}", err))?;
-
-    // Lock
-    permissions::lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await.map_err(e)?;
-
-    // Download
-    let result = saves::download(
-        p.as_ref(), &game.name, &app_id, &game.save_path,
-        |ev| { let _ = on_progress.send(serde_json::to_value(&ev).unwrap_or_default()); },
-    ).await;
-
-    if let Err(ref err) = result {
-        let _ = permissions::release_lock(p.as_ref(), &game.name, &app_id, &s.steam_id).await;
-        return Err(err.to_string());
-    }
-
-    Ok(serde_json::json!({ "backupTimestamp": ts }))
+    steam::get_player_summaries(&s.steam_api_key, &[s.steam_id.clone()]).await
+        .ok()
+        .and_then(|players| players.into_iter().next())
+        .map(|p| p.persona_name)
+        .unwrap_or_else(|| s.steam_id.clone())
 }
 
 #[tauri::command]
@@ -687,7 +617,7 @@ pub async fn upload_selected_saves(
     }
 
     // notes.json
-    let uploader_name = s.steam_id.clone();
+    let uploader_name = uploader_name(&s).await;
     let notes = saves::NotesData {
         description: payload.description,
         uploaded_by: s.steam_id.clone(),

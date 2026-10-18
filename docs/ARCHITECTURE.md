@@ -137,8 +137,7 @@ Motif récurrent : `settings::load()` → trouver le jeu dans `s.shared_games` p
 | `grant_access(appId, friendSteamId)` | `GameCard.handleAddBySteamId/handleAddFriend` | `permissions::grant` |
 | `revoke_access(appId, friendSteamId)` | `GameCard` (bouton × d'un utilisateur) | `permissions::revoke` |
 | `release_lock(appId)` | `GameCard.handleReleaseLock` | `permissions::release_lock` |
-| `upload_save(payload, onProgress)` | `GameCard.handleUpload` (**code mort : plus relié à un bouton**, remplacé par `upload_selected_saves`) | `permissions::read/init/can_write/locked_by_other`, `steam::get_player_summaries` (nom affiché), `saves::upload`, `permissions::mark_uploaded` |
-| `download_save(appId, onProgress)` | `GameCard.handleDownload` (**code mort**, remplacé par `download_selected_saves`) | `permissions::read/can_read/locked_by_other`, `backup::create` (échec = abandon), `permissions::lock`, `saves::download`, `release_lock` si erreur |
+| `uploader_name(s)` *(interne)* | `upload_selected_saves` | pseudo Steam via `steam::get_player_summaries`, sinon steamId |
 | `get_cloud_info(appId)` | `GameCard.loadCloudData`, `SaveTreeModal` (après download) | `saves::fetch_metadata` |
 | `download_images(appId)` | `GameCard.handleViewImages` | `saves::download_images` (cache local) |
 | `list_backups(appId)` | `GameCard` (montage, après download) | `backup::list` |
@@ -159,8 +158,8 @@ Motif récurrent : `settings::load()` → trouver le jeu dans `s.shared_games` p
 | `open_log_folder` | `Settings/DebugTab` | `opener().open_path` |
 | `get_local_save_tree(appId)` | `SaveTreeModal` (mode upload) | `filetree::build_local_tree(save_path)` |
 | `get_cloud_save_tree(appId)` | `SaveTreeModal` (mode download) | `filetree::build_cloud_tree(game_saves_path)` |
-| `upload_selected_saves(payload, onProgress)` | `SaveTreeModal.handleConfirm` (mode upload) — **chemin réellement utilisé** | perms (read/init/can_write/locked_by_other), `saves::safe_join` sur chaque chemin, `saves::transfer_all` (upload_file), images une par une, `notes.json`, `permissions::mark_uploaded`. ⚠ `uploader_name` = steamId (pas le pseudo Steam, contrairement à `upload_save`) |
-| `download_selected_saves(appId, selectedPaths, onProgress)` | `SaveTreeModal.handleConfirm` (mode download) — **chemin réellement utilisé** | perms (read/can_read/locked_by_other), `safe_join` (avant tout), `backup::create` (échec = abandon), `permissions::lock`, `saves::transfer_all` (download_file), `release_lock` si erreur. Renvoie `{ backupTimestamp }` |
+| `upload_selected_saves(payload, onProgress)` | `SaveTreeModal.handleConfirm` (mode upload) | perms (read/init/can_write/locked_by_other), `saves::safe_join` sur chaque chemin, `saves::transfer_all` (upload_file), images une par une, `notes.json`, `permissions::mark_uploaded`. `uploaderName` = pseudo Steam via `uploader_name` |
+| `download_selected_saves(appId, selectedPaths, onProgress)` | `SaveTreeModal.handleConfirm` (mode download) | perms (read/can_read/locked_by_other), `safe_join` (avant tout), `backup::create` (échec = abandon), `permissions::lock`, `saves::transfer_all` (download_file), `release_lock` si erreur. Renvoie `{ backupTimestamp }` |
 
 Note : après un download, le verrou reste posé (statut `locked`) jusqu'au prochain upload (`mark_uploaded`) ou `release_lock`. C'est le principe « je prends la save, je la rends ».
 
@@ -184,7 +183,7 @@ Déclare `steam`, `heroic`, `saves`, `backup`, `permissions`, `cloud`, `secure`.
 | `detect_save_path(steam_path, steam_id, app_id)` | 1) `userdata/<id32>/<appId>/remote` non vide → `steam_userdata` ; 2) Linux : `steamapps/compatdata/<appId>/pfx/drive_c/users/steamuser` → `proton` ; 3) sinon renvoie le chemin userdata quand même | `commands::detect_save_path` |
 | `get_owned_games(key, id)` | API `IPlayerService/GetOwnedGames` ; erreurs explicites si clé/ID manquants | `commands::get_owned_games` |
 | `get_friends_list(key, id)` | API `GetFriendList` puis `get_player_summaries` (profil Steam public requis) | `commands::get_friends_list` |
-| `get_player_summaries(key, ids)` | API `GetPlayerSummaries` par paquets de 100 | `get_friends_list`, `commands::get_player_info`, `commands::upload_save` |
+| `get_player_summaries(key, ids)` | API `GetPlayerSummaries` par paquets de 100 | `get_friends_list`, `commands::get_player_info`, `commands::uploader_name` |
 
 ### `services/heroic.rs` (Epic via Legendary, GOG)
 | Fonction | Rôle | Appelée par |
@@ -207,15 +206,10 @@ Déclare `steam`, `heroic`, `saves`, `backup`, `permissions`, `cloud`, `secure`.
 | Fonction | Rôle | Appelée par |
 |---|---|---|
 | `CONCURRENCY = 6` | Transferts simultanés | `transfer_all` |
-| `transfer_all(jobs, op, on_done)` | Exécute `op(a, b)` sur chaque paire avec 6 en parallèle (`buffer_unordered`), callback après chaque fichier, s'arrête à la 1re erreur | `upload`, `download`, `commands::upload_selected_saves/download_selected_saves` |
-| `safe_join(root, rel)` | Joint un chemin relatif en refusant `..`, absolu, préfixe de lecteur, vide | `download`, `download_images`, `commands::upload_selected_saves/download_selected_saves` |
-| `NotesData` | `description, uploadedBy, uploaderName, uploadedAt` (= `notes.json`) | `upload`, `commands::upload_selected_saves`, `fetch_metadata` |
+| `transfer_all(jobs, op, on_done)` | Exécute `op(a, b)` sur chaque paire avec 6 en parallèle (`buffer_unordered`), callback après chaque fichier, s'arrête à la 1re erreur | `commands::upload_selected_saves/download_selected_saves` |
+| `safe_join(root, rel)` | Joint un chemin relatif en refusant `..`, absolu, préfixe de lecteur, vide | `download_images`, `commands::upload_selected_saves/download_selected_saves` |
+| `NotesData` | `description, uploadedBy, uploaderName, uploadedAt` (= `notes.json`) | `commands::upload_selected_saves`, `fetch_metadata` |
 | `CloudSaveMetadata` | `{ notes?, imageCount }` | `fetch_metadata` |
-| `ProgressEvent` | `{ current, total, currentFile?, phase }` | callbacks de progression |
-| `collect_files(dir)` | Liste récursive des fichiers (walkdir), chemins relatifs | `upload` |
-| `upload(...)` | Saves (parallèle) → images `images/<i>.<ext>` → `notes.json` | `commands::upload_save` |
-| `download(...)` | `list_recursive` du dossier `saves/` → `safe_join` → `transfer_all` | `commands::download_save` |
-| `list_recursive(cloud, path, base)` | Paires (chemin distant, chemin relatif local), sous-dossiers en parallèle | `download` |
 | `fetch_metadata(cloud, name, id)` | Lit `notes.json` + compte les images en parallèle | `commands::get_cloud_info` |
 | `download_images(cloud, name, id, cache)` | Télécharge toutes les images dans le cache, renvoie les chemins locaux | `commands::download_images` |
 
@@ -225,7 +219,7 @@ Déclare `steam`, `heroic`, `saves`, `backup`, `permissions`, `cloud`, `secure`.
 | `backup_root(custom)` | `backupPath` ou `~/.backseat/backups` | `backup_dir` |
 | `backup_dir(steam_id, app_id, custom)` | `<root>/<steamId>/<appId>` | toutes |
 | `ts_now()` | Horodatage `YYYY-MM-DDTHH-MM-SS-mmmZ` | `create` |
-| `create(...)` | Copie le dossier de save (si existe, sinon renvoie `""`) puis `prune(3)` | `commands::download_save`, `commands::download_selected_saves` |
+| `create(...)` | Copie le dossier de save (si existe, sinon renvoie `""`) puis `prune(3)` | `commands::download_selected_saves` |
 | `restore(..., ts?)` | Dernier backup si `ts` absent ; **vide le dossier de save** puis recopie | `commands::restore_backup` |
 | `delete_backup(...)` | Supprime un backup | `commands::delete_backup_cmd` |
 | `list(...)` | Dossiers commençant par `20`, triés du plus récent au plus ancien | `commands::list_backups`, `restore`, `prune` |
@@ -241,7 +235,7 @@ Déclare `steam`, `heroic`, `saves`, `backup`, `permissions`, `cloud`, `secure`.
 | `write(cloud, name, id, p)` | Met `last_updated`, crée le dossier, écrit | toutes les fonctions de modification |
 | `can_read` / `can_write` | owner ou dans `allowed_users` (identiques) | commandes upload/download |
 | `locked_by_other(p, id)` | Verrou posé par quelqu'un d'autre | commandes upload/download, `lock` |
-| `init(cloud, id, name, owner)` | Crée le fichier si absent (statut `not_uploaded`, owner = moi) | `add_game`, `get_permissions`, `upload_save`, `upload_selected_saves` |
+| `init(cloud, id, name, owner)` | Crée le fichier si absent (statut `not_uploaded`, owner = moi) | `add_game`, `get_permissions`, `upload_selected_saves` |
 | `grant(..., steam_id, requester)` | Owner seulement ; ajoute à `allowed_users` | `commands::grant_access` |
 | `revoke(...)` | Owner seulement ; retire + libère son verrou éventuel | `commands::revoke_access` |
 | `lock(..., steam_id)` | Refuse si verrouillé par un autre ; statut `locked` | commandes download |
@@ -285,7 +279,7 @@ Déclare `steam`, `heroic`, `saves`, `backup`, `permissions`, `cloud`, `secure`.
 Monte `<App />` dans `#root` (StrictMode) et importe `index.css`.
 
 ### `types/index.ts`
-Interfaces miroir des structs Rust : `SteamGame`, `SteamFriend`/`SteamPlayer`, `SaveStatus`, `CloudSaveInfo`, `SharedGame`, `HeroicGame`, `GamePermissions`, `CloudProviderType` (`'google_drive'|'nextcloud'|'kdrive'`), `CloudConnectionStatus`, `AppSettings`, `UploadPayload`, `ProgressEvent`, `IpcResult`, `ModalType` (`'settings'|'add_game'|'image_viewer'|null`), `ToastMessage`, `CloudGameSuggestion`, `FileTreeNode`. **Si on ajoute un champ à une struct Rust, l'ajouter ici aussi.**
+Interfaces miroir des structs Rust : `SteamGame`, `SteamFriend`/`SteamPlayer`, `SaveStatus`, `CloudSaveInfo`, `SharedGame`, `HeroicGame`, `GamePermissions`, `CloudProviderType` (`'google_drive'|'nextcloud'|'kdrive'`), `CloudConnectionStatus`, `AppSettings`, `ProgressEvent`, `IpcResult`, `ModalType` (`'settings'|'add_game'|'image_viewer'|null`), `ToastMessage`, `CloudGameSuggestion`, `FileTreeNode`. **Si on ajoute un champ à une struct Rust, l'ajouter ici aussi.**
 
 ### `hooks/useIpc.ts`
 `call(promise)` → `{ success, data?, error? }`. `useIpc()` renvoie l'objet `api` :
@@ -298,7 +292,7 @@ Interfaces miroir des structs Rust : `SteamGame`, `SteamFriend`/`SteamPlayer`, `
 | `cloud` | `connect` → `cloud_connect`, `disconnect` → `cloud_disconnect`, `getStatus`/`test` → `cloud_get_status`, `gdriveGetAuthUrl` → `gdrive_get_auth_url`, `gdriveExchangeCode` → `gdrive_exchange_code` |
 | `games` | `getShared` → `get_shared_games`, `add` → `add_game`, `remove` → `remove_game`, `updateSavePath` → `update_save_path` |
 | `permissions` | `get` → `get_permissions`, `grant` → `grant_access`, `revoke` → `revoke_access`, `releaseLock` → `release_lock` |
-| `saves` | `upload` → `upload_save`, `download` → `download_save` (avec `Channel`), `getCloudInfo` → `get_cloud_info`, `downloadImages` → `download_images`, `readImage` → `read_image` |
+| `saves` | `getCloudInfo` → `get_cloud_info`, `downloadImages` → `download_images`, `readImage` → `read_image` |
 | `status` | `refreshAll` → `refresh_all_games_status` |
 | `filetree` | `getLocalTree` → `get_local_save_tree`, `getCloudTree` → `get_cloud_save_tree`, `uploadSelected` → `upload_selected_saves`, `downloadSelected` → `download_selected_saves` (avec `Channel`) |
 | `debug` | `getLogPath` → `get_log_path`, `setDebugLogging` → `set_debug_logging`, `openLogFolder` → `open_log_folder` |
@@ -351,7 +345,6 @@ Pas d'IPC.
 | `handleRefresh()` | Bouton Actualiser | `loadCloudData` |
 | `useEffect [appId]` | Liste des backups | `backup.list` |
 | `refreshPerms()` | Relit les permissions | `permissions.get` |
-| `handleUpload()` / `handleDownload()` | **Non utilisées** (anciens transferts complets ; les boutons ouvrent maintenant `SaveTreeModal`) | `saves.upload` / `saves.download`, `backup.list` |
 | `handleReleaseLock()` | Libérer le verrou (détenteur ou owner) | `permissions.releaseLock` |
 | `handleRestore(ts?)` / `handleDeleteBackup(ts)` | Backups locaux | `backup.restore` / `backup.delete` |
 | `handleRemoveGame()` | Retire le jeu (après confirmation) et supprime son dossier cloud | `games.remove`, `games.getShared` |
@@ -363,7 +356,6 @@ Pas d'IPC.
 | Bouton « Télécharger » | `setTreeModal('download')` | — |
 | Bouton « Uploader » | Copie description + images puis `setTreeModal('upload')` | — |
 | `<SaveTreeModal onDone>` | Après upload : reset + badge `available` ; après download : badge backup + relit backups ; puis `refreshPerms` | `backup.list` |
-| `InlineProgress(...)` | Barre de progression (utilisée seulement par le code mort) | — |
 | `formatTs(ts)` | Horodatage de backup → date lisible | — |
 | `SavePathSection(...)` | Affiche/modifie le dossier de sauvegarde (`handleBrowse`, `handleSave`, `handleCancel`) | `dialog.openFolder`, `games.updateSavePath` |
 
@@ -454,7 +446,5 @@ npm run dev                     # lance l'appli en dev
 Logs détaillés : lancer avec `BACKSEAT_LOG=debug npm run dev`, puis lire `~/.local/share/backseat/backseat.log` (ou Paramètres → Debug → Ouvrir le dossier).
 
 ## 7. Points connus
-- `GameCard.handleUpload/handleDownload`, `InlineProgress`, et les commandes `upload_save`/`download_save` sont du code mort (remplacés par `SaveTreeModal`).
-- `upload_selected_saves` écrit `uploaderName = steamId` (pas le pseudo Steam).
 - Google Drive : provider incomplet (voir §2).
 - Commandes exposées mais non appelées par les composants : `get_player_info`, `cloud_get_status`, `detect_heroic_path`.
